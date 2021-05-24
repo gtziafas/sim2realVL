@@ -1,0 +1,23 @@
+no,category,label,color,shape,material,general,special
+1,bowl,bowl_2,"white, light blue","bowl, ","ceramic, reflective","container, household","cereal bowl,narrow bowl,shiny bowl"
+2,bowl,bowl_3,white,"bowl, circular",plastic,"container, household",wide bowl
+3,bowl,bowl_4,white,"bowl, paraboloid","ceramic, reflective","container, household","punch bowl, big bowl, tall bowl"
+4,cap,cap_1,"white, w/gray","circular, non-convex",cloth,"clothing, hat, fashion","W cap, stripped cap, fashion cap"
+5,cap,cap_3,"black, w/gray, w/red","circular, non-convex",cloth,"clothing, hat, fashion","Bulldog cap, dog cap, dog logo cap"
+6,cap,cap_4,red,"circular, non-convex",cloth,"clothing, hat, fashion","black dotted cap, simple cap"
+7,cereal_box,cereal_box_1,"orange, w/white, w/brown, w/green","box, square, trapezoid",plastic,"edible, food, product",Brain Flakes
+8,cereal_box,cereal_box_2,"brown, w/blue, w/red","box, square, trapezoid",plastic,"edible, food, product",Chex
+9,cereal_box,cereal_box_4,"blue, w/yellow","bowl, ",plastic,"edible, food, product","Crunch, Raisin Bran"
+10,coffee_mug,coffee_mug_1,"red, w/white, w/black",cylinder,"ceramic, porcelain","container, cup, household",Software Storage mug
+11,coffee_mug,coffee_mug_4,"white, w/blue",cylinder,"ceramic, porcelain","container, cup, household","simple mug, plain mug"
+12,coffee_mug,coffee_mug_5,white,cylinder,"ceramic, porcelain","container, cup, household",tall mug
+13,coffee_mug,coffee_mug_6,"cream, light yellow, mellow yellow",circular,"ceramic, porcelain, reflective","container, cup, household","flat mug, wide mug, big mug, shiny mug"
+14,flashlight,flashlight_1,"black, w/silver","cylinder-like, cone-like","rubber, glass, lens","tool, torch, torchlight, light bulb",thin base flashlight
+15,flashlight,flashlight_2,"red, w/black","cylinder-like, ","rubber, glass, lens","tool, torch, torchlight, light bulb",long base flashlight
+16,flashlight,flashlight_3,"blue, w/black","cylinder-like, ","rubber, glass, lens","tool, torch, torchlight, light bulb",long base flashlight
+17,flashlight,flashlight_5,"yellow, w/black","cylinder-like, ","rubber, glass, lens","tool, torch, torchlight, light bulb","black base flashlight, long base flashlight"
+18,soda_can,soda_can_1,"blue, w/red",cylinder,aluminium,"edible, soft drink, product","Pepsi, coke can, cola can"
+19,soda_can,soda_can_3,"green, w/silver, w/red",cylinder,aluminium,"edible, soft drink, product","Mountain Dew, citrus drink"
+20,soda_can,soda_can_4,"black, w/red",cylinder,aluminium,"edible, soft drink, product","Coca Cola Zero, coke can, cola can, Coca Cola"
+21,soda_can,soda_can_5,"white, w/red",cylinder,aluminium,"edible, soft drink, product","Dr Pepper, Dr Pepper Diet"
+22,soda_can,soda_can_6,"orange, w/white, w/blue",cylinder,aluminium,"edible, soft drink, product","Welchs, orange drink"
