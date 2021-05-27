@@ -1,12 +1,16 @@
 from ..types import *
 from ..utils.word_embedder import WordEmbedder
+from ..utils.image_proc import crop_boxes_fixed
+from ..data.rgbd_scenes import RGBDScenesVG
 
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F
+import torchvision.transforms as T
 from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as T
 from opt_einsum import contract
+from PIL import Image
 
 
 class RNNContext(nn.Module):
@@ -15,8 +19,9 @@ class RNNContext(nn.Module):
         self.rnn = nn.LSTM(inp_dim, hidden_dim, num_layers, bidirectional=True, batch_first=True)
 
     def forward(self, x: Tensor) -> Tensor:
+        dh = self.rnn.hidden_size
         H, _ = self.rnn(x)  # B x T x 2*D
-        return torch.cat((H[:, -1, :self.rnn.hidden_size], H[:, 0, self.rnn.hidden_size:]), dim=-1) # B x 2*D
+        return torch.cat((H[:, -1, :dh], H[:, 0, dh:]), dim=-1) # B x 2*D
 
 
 # template
@@ -63,29 +68,29 @@ class MultiLabelMLPVG(MultiLabelVG):
         self.forward = self._forward_fast if visual_encoder is None else self._forward
 
     def _forward(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        vseq, tseq, bseq = inputs
-        # vseq: B x N x 1 x H x W, bseq: B x N x 4, tseq: B x T x Dt
+        visual, text, boxes = inputs
+        # visual: B x N x 3 x H x W, boxes: B x N x 4, text: B x T x Dt
         assert self.venc is not None
-        batch_size, num_boxes, _, height, width = vseq.shape
+        batch_size, num_boxes, _, height, width = visual.shape
         
-        vfeats = self.venc(vseq.view(batch_size * num_boxes, 1, height, width))
+        vfeats = self.venc(visual.view(batch_size * num_boxes, 3, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
-        tcontext = self.tenc(tseq).unsqueeze(1).repeat(1, num_boxes, 1) # B x N xDt
+        tcontext = self.tenc(text).unsqueeze(1).repeat(1, num_boxes, 1) # B x N xDt
 
-        catted = torch.cat((vfeats, bseq, tcontext), dim=-1) # B x N x (Dv+4+Dt)
+        catted = torch.cat((vfeats, boxes, tcontext), dim=-1) # B x N x (Dv+4+Dt)
         return self.cls(catted).squeeze() # B x N x 1
 
     def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        # vfeats: B x N x Dv, bseq: B x N x 4, tseq: B x T x Dt
-        vfeats, tseq, bseq = inputs
-        bseq[:, :, :] = 0.5 # -> witness if 2d info helps
+        # vfeats: B x N x Dv, boxes: B x N x 4, text: B x T x Dt
+        visual, text, boxes = inputs
+        #boxes[:, :, :] = 0. # -> witness if 2d info helps
 
-        #print(vfeats.shape, tseq.shape, bseq.shape)
-        tcontext = self.tenc(tseq).unsqueeze(1)
+        #print(visual.shape, text.shape, boxes.shape)
+        tcontext = self.tenc(text).unsqueeze(1)
         #print(tcontext.shape)
-        tcontext = tcontext.repeat(1, vfeats.shape[1], 1)
+        tcontext = tcontext.repeat(1, visual.shape[1], 1)
         #print(tcontext.shape)
-        catted = torch.cat((vfeats, bseq, tcontext), dim=-1)
+        catted = torch.cat((visual, boxes, tcontext), dim=-1)
         #print(catted.shape)
         return self.cls(catted).squeeze()
 
@@ -108,9 +113,10 @@ class MultiLabelRNNVG(MultiLabelVG):
         self.num_f_layers = num_fusion_layers
         self.tenc = text_encoder
         self.venc = visual_encoder
-        self.d_inp = vfeat_dim + tfeat_dim
+        self.d_inp = self.d_v + self.d_t + 4
+        self.with_downsample = with_downsample
         if with_downsample:
-            self.downsample = nn.Linear(self.d_v + self.d_t, self.d_f)
+            self.downsample = nn.Linear(self.d_inp, self.d_f)
             self.d_inp = self.d_f
         self.rnn = nn.LSTM(self.d_inp, self.d_f, self.num_f_layers, bidirectional=True, batch_first=True)
         self.cls = nn.Linear(2 * self.d_f, 1)
@@ -119,25 +125,25 @@ class MultiLabelRNNVG(MultiLabelVG):
         self.forward = self._forward_fast if visual_encoder is None else self._forward
 
     def _forward(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        vseq, tseq, _ = inputs
+        visual, text, boxes = inputs
 
-        # vseq: B x N x 1 x H x W, tseq: B x T x Dt
+        # visual: B x N x 1 x H x W, text: B x T x Dt
         assert self.venc is not None
-        batch_size, num_boxes, _, height, width = vseq.shape
+        batch_size, num_boxes, _, height, width = visual.shape
         
-        vfeats = self.venc(vseq.view(batch_size * num_boxes, 1, height, width))
+        vfeats = self.venc(visual.view(batch_size * num_boxes, 1, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
-        tcontext = self.tenc(tseq)
-        return self.fuse(vfeats, tcontext)
+        tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)
+        return self.fuse(vfeats, tcontext, boxes)
 
     def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        vfeats, tseq = inputs
-        # vfeats: B x N x Dv, tseq: B x T x Dt
-        tcontext = self.tenc(tseq)  # B x Dt
-        return self.fuse(vfeats, tcontext)
+        vfeats, text, boxes = inputs
+        # vfeats: B x N x Dv, text: B x T x Dt
+        tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)  # B x N x Dt
+        return self.fuse(vfeats, tcontext, boxes)
 
-    def fuse(self, vfeats: Tensor, tcontext: Tensor) -> Tensor:
-        fusion = torch.cat((vfeats, tcontext), dim=-1) # B x N x (Dv+Dt)
+    def fuse(self, vfeats: Tensor, tcontext: Tensor, boxes: Tensor) -> Tensor:
+        fusion = torch.cat((vfeats, tcontext, boxes), dim=-1) # B x N x (Dv+Dt+4)
         if self.with_downsample:
             fusion = self.downsample(fusion).tanh()  # B x N x Df
         fusion, _ = self.rnn(fusion)    # B x N x (2*Df)
@@ -147,128 +153,136 @@ class MultiLabelRNNVG(MultiLabelVG):
 # M2: Cross-attention between bounding boxes and words
 class MultiLabelMHAVG(nn.Module):
     def __init__(self, 
-                 visual_encoder: nn.Module,
-                 fusion_kwargs: Dict[str, Any],
-                 num_heads: int,
+                 visual_encoder: Maybe[nn.Module],
+                 fusion_dim: int,
+                 num_heads: int,  
                  visual_feat_dim: int = 512,
                  text_feat_dim: int = 300,
-                 with_downsample: bool = True
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
         self.d_t = text_feat_dim
-        self.d_f = fusion_kwargs['fusion_dim']
+        self.d_f = fusion_dim
         assert self.d_f % num_heads == 0, 'Must use #heads that divide fusion dim'
         self.d_a = self.d_f // num_heads
         self.num_heads = num_heads
         self.venc = visual_encoder
-        self.w_q = nn.Linear(self.d_t, self.d_f)
-        self.w_k = nn.Linear(self.d_v, self.d_f)
-        self.w_v = nn.Linear(self.d_v, self.d_f)
+        self.tenc = nn.LSTM(self.d_t, self.d_f // 2, 1, bidirectional=True, batch_first=True)
+        self.w_q = nn.Linear(self.d_v + 4, self.d_f)
+        self.w_k = nn.Linear(self.d_t, self.d_f)
+        self.w_v = nn.Linear(self.d_t, self.d_f)
         self.cls = nn.Linear(self.d_f, 1)
 
         # if skipping visual encoder, run other forward method
         self.forward = self._forward_fast if visual_encoder is None else self._forward
 
     def attention(self, q: Tensor, k: Tensor, v: Tensor, mask: MayTensor = None) -> Tensor:
-        # q: B x N x Da x H,    k,v: B x W x Da x H,    Df = H * Da
+        # q: B x N x Da x H,    k,v: B x T x Da x H,    Df = H * Da
         batch_size, num_boxes, model_dim, num_heads = q.shape
-        dividend = torch.sqrt(torch.tensor(model_dim, device=q.device, dtype=floatt))
+        dividend = torch.sqrt(torch.tensor(model_dim * num_heads, device=q.device, dtype=floatt))
 
-        weights = contract('bndh,bldh->bnlh', q, k) # B x N x W x H 
+        weights = contract('bndh,btdh->bnth', q, k) # B x N x T x H 
         if mask is not None:
             mask = mask.unsqueeze(-1).repeat(1, 1, 1, num_heads)
             weights = weights.masked_fill_(mask == 0, value=-1e-10)
-        probs = weights.softmax(dim=-2) # B x N x W x H
+        probs = weights.softmax(dim=-2) # B x N x T x H
 
-        return contract('bnlh,bldh->bndh', probs, v).flatten(-2) # B x N x Df
+        return contract('bnlh,btdh->bndh', probs, v).flatten(-2) # B x N x Df
 
     def _forward(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        vseq, tseq, _ = inputs
-        # vseq: B x N x RGB, tseq: B x W x Dt
-        batch_size, num_boxes, _, height, width = vseq.shape
-        vfeats = self.venc(vseq.view(batch_size * num_boxes, 3, height, width))
+        visual, text, boxes = inputs
+        # visual: B x N x RGB, text: B x T x Dt
+        tfeats, _ = self.tenc(text)
+        batch_size, num_boxes, _, height, width = visual.shape
+        vfeats = self.venc(visual.view(batch_size * num_boxes, 3, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
-        return self.mha(vfeats, tseq)
+        return self.mha(torch.cat((vfeats, boxes), dim=-1), tfeats)
 
     def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        vfeats, tseq, _ = inputs
-        # vfeats: B x N x Dv, tseq: B x W x Dt
-        return self.mha(vfeats, tseq)
+        vfeats, text, boxes = inputs
+        tfeats, _ = self.tenc(text)
+        # vfeats: B x N x Dv, text: B x T x Dt
+        return self.mha(torch.cat((vfeats, boxes), dim=-1), tfeats)
 
-    def mha(self, vfeats: Tensor, tseq: Tensor) -> Tensor:
+    def mha(self, vfeats: Tensor, tfeats: Tensor) -> Tensor:
         batch_size, num_words = tfeats.shape[0:2]
         num_boxes = vfeats.shape[1]
 
         v_proj = self.w_q(vfeats).view(batch_size, num_boxes, -1, self.num_heads)
-        t_keys = self.w_k(tseq).view(batch_size, num_words, -1, self.num_heads)
-        t_vals = self.w_v(tseq).view(batch_size, num_words, -1, self.num_heads)
+        t_keys = self.w_k(tfeats).view(batch_size, num_words, -1, self.num_heads)
+        t_vals = self.w_v(tfeats).view(batch_size, num_words, -1, self.num_heads)
         attended = self.attention(v_proj, t_keys, t_vals)
-
-        return self.cls(attended)
-
-
-def collate(device: str, 
-            word_embedder: WordEmbedder,
-            with_boxes: bool = True, 
-            ignore_idx: int = -1,
-            scene_shape: Tuple[int, int] = (640, 480),
-            with_normalization: bool = True
-            ) -> Map[Sequence[AnnotatedScene], Tuple[Tensor, Tensor, Tensor, MayTensor]]:
-    W, H = scene_shape
-    tf = T.Compose([T.CenterCrop(224), T.ToTensor()])
-    if with_normalization:
-        tf = T.Compose([tf, T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
-
-    def _collate(batch: Sequence[AnnotatedScene]) -> Tuple[Tensor, Tensor, Tensor, MayTensor]:
-        imgs = [scene.get_crops() for scene in batch]
-        imgs = [[Image.fromarray(c) for c in crops] for crops in imgs]
-        imgs = [torch.stack([tf(c) for c in crops]) for crops in imgs]
-        imgs = pad_sequence(imgs, batch_first=True, padding_value=ignore_idx).to(device)
-
-        words, truths, boxes = zip(*[(s.query, s.truth, s.boxes) for s in batch])
-        words = word_embedder(words)
-        words = [torch.tensor(ws, dtype=floatt, device=device) for ws in words]
-        words = pad_sequence(words, batch_first=True)
-
-        truths = [torch.tensor(t, dtype=longt, device=device) for t in truths]
-        truths = pad_sequence(truths, batch_first=True, padding_value=ignore_idx)
-
-        _boxes = None
-        if with_boxes:
-          _boxes = [torch.stack([torch.tensor([b.x/W, b.y/H, b.w/W, b.h/H], dtype=floatt, device=device) for b in bs]) for bs in boxes]
-          _boxes = pad_sequence(_boxes, batch_first=True, padding_value=ignore_idx)
-        return imgs, words, truths, _boxes
-
-    return _collate
+        return self.cls(attended).squeeze()
 
 
-def collate_fast(device: str, 
-            with_boxes: bool = True, 
-            ignore_idx: int = -1,
-            scene_shape: Tuple[int, int] = (640, 480),
-            with_normalization: bool = True
-            ) -> Map[Sequence[Tuple[Tensor, List[Tensor], List[Tuple[int]], List[Box]]], Tuple[Tensor, Tensor, Tensor, MayTensor]]:
-    W, H = scene_shape
-
-    def _collate(batch: Sequence[Tuple[Tensor, List[Tensor], List[Tuple[int]], List[Box]]]) -> Tuple[Tensor, Tensor, Tensor, MayTensor]:
-        feats, words, truths, boxes = zip(*[(f, q, t, b) for f, q, t, b in batch])
-        feats = pad_sequence(feats, batch_first=True, padding_value=ignore_idx).to(device)
-
-        #words = word_embedder(words)
-        words = pad_sequence([torch.tensor(w, dtype=floatt, device=device) for w in words], batch_first=True)
-
-        truths = [torch.tensor(t, dtype=longt, device=device) for t in truths]
-        truths = pad_sequence(truths, batch_first=True, padding_value=ignore_idx)
-
-        _boxes = None
-        if with_boxes:
-          _boxes = [torch.stack([torch.tensor([b.x/W, b.y/H, b.w/W, b.h/H], dtype=floatt, device=device) for b in bs]) for bs in boxes]
-          _boxes = pad_sequence(_boxes, batch_first=True, padding_value=ignore_idx)
-        return feats, words, truths, _boxes
+def collate(device: str, with_boxes: bool = True, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], Tuple[Tensor, Tensor, Tensor, MayTensor]]:
+    def _collate(batch: List[Tuple[Tensor, ...]]) -> Tuple[Tensor, Tensor, Tensor, MayTensor]:
+        visual, text, truths, boxes = zip(*batch)
+        visual = pad_sequence(visual, batch_first=True, padding_value=ignore_idx).to(device)
+        text = pad_sequence(text, batch_first=True).to(device)
+        truths = pad_sequence(truths, batch_first=True, padding_value=ignore_idx).to(device)
+        boxes = pad_sequence(boxes, batch_first=True, padding_value=ignore_idx).to(device) if with_boxes else None
+        return visual, text, truths, boxes
 
     return _collate
 
 
 def default_vg_model():
+  from torchvision.models import resnet18
+  model = resnet18()
+  model.fc = torch.nn.Identity()
+  return MultiLabelMLPVG(visual_encoder=model, text_encoder=RNNContext(300, 150, 1))
+
+
+def fast_vg_model():
   return MultiLabelMLPVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1))
+
+
+def make_vg_dataset(ds: RGBDScenesVG, 
+                  fast : Maybe[str] = None,
+                  save_path: Maybe[str] = None,   
+                  img_resize: Tuple[int, int] = (120, 120),
+                  scene_shape: Tuple[int, int] = (640, 480)
+                  ) -> List[Tuple[Tensor, ...]]:
+  W, H = scene_shape
+
+  from ..utils.word_embedder import make_word_embedder
+  we = make_word_embedder()
+  #querries = we([ds[i].query for i in range(len(ds))])
+
+  # split indices into groups of unique scenes
+  idces = [[i for i, p in enumerate(ds.rgb_paths) if p == path] for path in ds.unique_scenes]
+
+  tensorized = []
+  print('Tensorizing data...')
+  if not fast:
+    for ids in idces:
+       crops = ds[ids[0]].get_crops()
+       crops = crop_boxes_fixed(img_resize)(crops)
+       crops = torch.stack([torch.tensor(c, dtype=floatt) for c in crops]).view(-1, 3, *img_resize)
+
+       for index in ids:
+          scene = ds[index]
+          query = we([scene.query])[0]
+          query = torch.tensor(query, dtype=floatt)
+          truth = torch.tensor(scene.truth, dtype=longt)
+          boxes = torch.stack([torch.tensor([b.x/W, b.y/H, b.w/W, b.h/H]).float() for b in scene.boxes])
+
+          tensorized.append((crops, query, truth, boxes))
+  else:
+    all_feats = torch.load(fast)
+    for i, scene in enumerate(ds):
+      unique_index = [n for n, ids in enumerate(idces) if i in ids]
+      assert len(unique_index) == 1
+      feats = all_feats[unique_index[0]]
+      query = we([scene.query])[0]
+      query = torch.tensor(query, dtype=floatt)
+      truth = torch.tensor(scene.truth, dtype=longt)
+      boxes = torch.stack([torch.tensor([b.x/W, b.y/H, b.w/W, b.h/H]).float() for b in scene.boxes])
+
+      tensorized.append((feats, query, truth, boxes))      
+
+  if save_path is not None:
+    print(f'Saving checkpoint in {save_path}')
+    torch.save(tensorized, save_path)
+  return tensorized

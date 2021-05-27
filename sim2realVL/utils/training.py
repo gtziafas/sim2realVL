@@ -6,13 +6,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 
-def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module, ignore_idx: int = -1) -> Metrics:
+def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module, metrics_fn: MetricsFn) -> Metrics:
     model.train()
     
     all_preds, all_labels = [], []
-    total_correct = 0
     epoch_loss = 0
-    for imgs, words, truths, boxes in dl:
+    #total_correct = 0
+    for batch_idx, (imgs, words, truths, boxes) in dl:
         preds = model.forward([imgs, words, boxes])
         loss = criterion(preds, truths.argmax(-1))
 
@@ -22,36 +22,34 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
         optim.zero_grad()
 
         # metrics
-        # all_preds.extend(preds.detach().cpu().numpy())
-        # all_labels.extend(truths.detach().cpu().numpy())
+        all_preds.extend(preds.detach().cpu())
+        all_labels.extend(truths.detach().cpu())
         epoch_loss += loss.item()
-        preds[truths==ignore_idx] = -1e03
-        total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
-
+        #preds[truths==ignore_idx] = -1e03
+        #total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
     epoch_loss /= len(dl)
-    accuracy = total_correct / len(dl.dataset)
-    return {'loss': round(epoch_loss, 5), 'accuracy': accuracy}#**metrics_fn(all_preds, all_labels)}
+
+    return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
 
 
 @torch.no_grad()
-def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module, ignore_idx: int = -1) -> Metrics:
+def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module, metrics_fn: MetricsFn) -> Metrics:
     model.eval()
 
     all_preds, all_labels = [], []
-    total_correct = 0
+    #total_correct = 0
     epoch_loss = 0
-    for imgs, words, truths, boxes in dl:
+    for batch_idx, (imgs, words, truths, boxes) in dl:
         preds = model.forward([imgs, words, boxes])
         loss = criterion(preds, truths.argmax(-1))
-        # all_preds.extend(preds.cpu().numpy())
-        # all_labels.extend(truths.cpu().numpy())
+        all_preds.extend(preds.cpu())
+        all_labels.extend(truths.cpu())
         epoch_loss += loss.item()
-        preds[truths==ignore_idx] = -1e03
-        total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
+        #preds[truths==ignore_idx] = -1e03
+        #total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
+    epoch_loss /= num_batches
     
-    epoch_loss /= len(dl)
-    accuracy = total_correct / len(dl.dataset)
-    return {'loss': round(epoch_loss, 5), 'accuracy': accuracy}#**metrics_fn(all_preds, all_labels)}
+    return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
 
 
 class Trainer(ABC):
@@ -118,7 +116,7 @@ class Trainer(ABC):
             print('==' * 72)
 
     def train_epoch(self):
-        return train_epoch(self.model, self.train_dl, self.optimizer, self.criterion)
+        return train_epoch(self.model, self.train_dl, self.optimizer, self.criterion, self.metrics_fn)
 
     def eval_epoch(self):
-        return eval_epoch(self.model, self.dev_dl, self.criterion)
+        return eval_epoch(self.model, self.dev_dl, self.criterion, self.metrics_fn)

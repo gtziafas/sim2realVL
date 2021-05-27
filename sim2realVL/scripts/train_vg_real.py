@@ -1,9 +1,8 @@
 from ..types import *
-from ..data.rgbd_scenes import RGBDScenesVG 
 from ..utils.training import Trainer
-from ..utils.word_embedder import make_word_embedder
 from ..utils.metrics import Metrics, vg_metrics
-from ..models.vg import default_vg_model, collate, collate_fast
+from ..data.rgbd_scenes import RGBDScenesVG
+from ..models.vg import *
 
 import torch
 import torch.nn as nn 
@@ -20,9 +19,8 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(1312)
 
 
-def main(embeddings: str,
+def main(num_epochs: int,
          batch_size: int,
-         num_epochs: int,
          lr: float,
          wd: float,
          device: str,
@@ -34,13 +32,17 @@ def main(embeddings: str,
          kfold: Maybe[int]
          ):
     def train(train_ds: List[AnnotatedScene], dev_ds: List[AnnotatedScene], test_ds: Maybe[List[AnnotatedScene]] = None) -> Metrics:
-        train_dl = DataLoader(train_ds, shuffle=True, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collator(device))
-        dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collator(device))
+        train_dl = DataLoader(train_ds, shuffle=True, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
+        dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
 
         # optionally test in separate split, given from a path directory as argument
-        test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collator(device)) if test_ds is not None else None
+        test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
-        model = default_vg_model().to(device)
+        #model = default_vg_model().to(device)
+        #model = fast_vg_model().to(device)
+        model = MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
+                                fusion_dim=200, num_fusion_layers=1, with_downsample=True).to(device)
+        #model = MultiLabelMHAVG(visual_encoder=None, fusion_dim=300, num_heads=3).to(device)
         if load_path is not None:
             model.load_pretrained(load_path)
         optim = Adam(model.parameters(), lr=lr, weight_decay=wd)
@@ -52,12 +54,7 @@ def main(embeddings: str,
 
     # get data
     print('Loading...')
-    ds = RGBDScenesVG()
-    #we = make_word_embedder(embeddings)
-    collator = collate
-    if checkpoint is not None:
-        ds = torch.load(checkpoint)
-        collator = collate_fast
+    ds = make_vg_dataset(RGBDScenesVG()) if not checkpoint else torch.load(checkpoint)
     
     if not kfold:
         # random split
@@ -86,7 +83,6 @@ def main(embeddings: str,
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-emb', '--embeddings', help='what type of word embeddings to use', type=str, default='glove_md')
     parser.add_argument('-d', '--device', help='cpu or cuda', type=str, default='cuda')
     parser.add_argument('-bs', '--batch_size', help='batch size to use for training', type=int, default=64)
     parser.add_argument('-e', '--num_epochs', help='how many epochs of training', type=int, default=10)

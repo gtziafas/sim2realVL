@@ -69,11 +69,11 @@ def pad_with_frame(imgs: List[array], desired_shape: Tuple[int, int]) -> List[ar
     
     def _pad_with_frame(img: array) -> array:
         # construct a frame of desired resolution
-        frame = np.zeros((H, W, 3))
+        frame = np.zeros((H, W, 3), dtype=np.uint8)
 
         # paste image in the center of the frame
-        startx, starty = (H - img.shape[0]) // 2, (W - img.shape[1]) // 2
-        frame[startx : startx + img.shape[0], starty :  starty + img.shape[1], :] = img
+        starty, startx = max(0, (H - img.shape[0]) // 2), max(0, (W - img.shape[1]) // 2)
+        frame[starty : starty + min(H, img.shape[0]), startx :  startx + min(W, img.shape[1]), :] = img
         return frame
 
     return list(map(_pad_with_frame, imgs))
