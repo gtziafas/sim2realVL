@@ -5,6 +5,7 @@ from ..data.rgbd_scenes import RGBDScenesDataset
 
 from random import random, choice, seed
 from tqdm import tqdm
+import pandas as pd
 from collections import Counter
 
 seed(1312)
@@ -14,11 +15,11 @@ def spatial_replace(idx: str, graph: SceneGraph, chance: float):
     def inner_chance(token_idx: int) -> str:
         if chance < 0.5:
             return  graph.nodes[token_idx].category
-        elif chance < 0.75:
+        elif chance < 0.8:
             return  graph.nodes[token_idx].color + ' ' + graph.nodes[token_idx].category
         else:
             return choice(graph.nodes[token_idx].special) 
-
+            
     # identify closest object and make sure its not the ambiguous one
     dists = graph.edges[idx, :, -1]
     cat, cats = graph.nodes[idx].category, [o.category for o in graph.nodes]
@@ -52,17 +53,18 @@ def visual_replace(idx: int, graph: SceneGraph):
     obj = graph.nodes[idx]
 
     chance = random()
-    if chance < 0.33:
+    if chance < 0.5:
         # keep category
         return obj.category
     
-    elif chance < 0.66:
+    elif chance < 0.75:
         # replace with COLOR + category
         return obj.color + ' ' + obj.category
     
     else:
         # replace with special tag from catalogue
         return choice(obj.special)
+       
 
 
 def randomly_replace(idx: int, graph: SceneGraph):
@@ -71,7 +73,8 @@ def randomly_replace(idx: int, graph: SceneGraph):
     if len(graph.nodes) > 1:
         chance = random()
         
-        if chance < 0.75:
+        # FOR REAL IT WAS 0.75!!!!
+        if chance < 0.5:
             return visual_replace(idx, graph)        
         else:
             # replace with spatial relationship
@@ -118,10 +121,11 @@ def generate_refex(scenes: List[Scene]) -> List[List[str]]:
                     # give color + label sample (works also for multi-labeled cases)
                     if color_count == cat_count:
                         chance = random()
-                        if chance < 0.75:
+                        if chance < 0.5:
                             _refex.append(color + ' ' + cat)
                         else:
                             _refex.append(choice(graph.nodes[idx].special))
+                            #_refex.append(color + ' ' + cat)
 
                     # else we have to use spatial relationship
                     else:
@@ -147,17 +151,23 @@ def massage_refex(refex: List[List[str]], scenes: List[Scene]):
     for idx, (_refex, scene) in enumerate(zip(refex, scenes)):
         graph = extract_scene_graph(scene)
 
-        # if same as previous, randomly add some content to some captions
-        if _refex != previous:
-            previous = _refex
-            continue
+        # FOR REAL
+        # # if same as previous, randomly add some content to some captions
+        # if _refex != previous:
+        #     previous = _refex
+        #     continue
 
-        else:
+        # else:
             # identify objects that are captioned by their label
-            obj_ids =  [i for i, obj in enumerate(graph.nodes) if obj.category == _refex[i]]
-            _refex = [randomly_replace(i, graph) if i in obj_ids else c for i, c in enumerate(_refex)]
-            refex[idx] = _refex
+            # obj_ids =  [i for i, obj in enumerate(graph.nodes) if obj.category == _refex[i]]
+            # _refex = [randomly_replace(i, graph) if i in obj_ids else c for i, c in enumerate(_refex)]
+            # refex[idx] = _refex
     
+        # FOR SIM
+        obj_ids =  [i for i, obj in enumerate(graph.nodes) if obj.category == _refex[i]]
+        _refex = [randomly_replace(i, graph) if i in obj_ids else c for i, c in enumerate(_refex)]
+        refex[idx] = _refex        
+
     return refex
                         
 
@@ -204,4 +214,19 @@ def _make_refex_dataset(ds: List[Scene], refex: List[List[str]], save_path: str)
 
 
 def make_refex_dataset(ds: List[Scene], save_path: str):
-    _make_refex_dataset(generate_refex(ds))
+    _refex = generate_refex(ds)
+    _make_refex_dataset(ds, _refex, save_path)
+
+
+def make_refex_dataset_sim(csv_path: str, refex: List[List[str]], save_path: str):
+    table = pd.read_table(csv_path)
+    iids = table['image_ids'].tolist()
+    labels = table['labels'].tolist()
+    boxes = table['boxes'].tolist()
+    depths = table['depths'].tolist()
+    refex = [','.join(r) for r in refex]
+    WRITE = ['\t'.join([str(i), l, b, d, r]) for i, l, b, d, r in zip(iids, labels, boxes, depths, refex)]
+    with open(save_path, "w") as f:
+        f.write('\t'.join(["image_ids", "labels", "boxes", "depths", "querries"]))
+        f.write('\n')
+        f.write('\n'.join(WRITE))

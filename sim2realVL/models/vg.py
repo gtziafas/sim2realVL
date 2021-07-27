@@ -1,5 +1,5 @@
 from ..types import *
-from ..utils.word_embedder import WordEmbedder
+from ..utils.word_embedder import WordEmbedder, make_word_embedder
 from ..utils.image_proc import crop_boxes_fixed
 from ..data.rgbd_scenes import RGBDScenesVG
 
@@ -131,7 +131,7 @@ class MultiLabelRNNVG(MultiLabelVG):
         assert self.venc is not None
         batch_size, num_boxes, _, height, width = visual.shape
         
-        vfeats = self.venc(visual.view(batch_size * num_boxes, 1, height, width))
+        vfeats = self.venc(visual.view(batch_size * num_boxes, 3, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
         tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)
         return self.fuse(vfeats, tcontext, boxes)
@@ -227,11 +227,12 @@ def collate(device: str, with_boxes: bool = True, ignore_idx: int = -1) -> Map[L
     return _collate
 
 
-def default_vg_model():
+def get_default_model():
   from torchvision.models import resnet18
-  model = resnet18()
-  model.fc = torch.nn.Identity()
-  return MultiLabelMLPVG(visual_encoder=model, text_encoder=RNNContext(300, 150, 1))
+  venc = resnet18()
+  venc.fc = torch.nn.Identity()
+  return MultiLabelRNNVG(visual_encoder=venc, text_encoder=RNNContext(300, 150, 1), 
+                                fusion_dim=200, num_fusion_layers=1, with_downsample=True)
 
 
 def fast_vg_model():

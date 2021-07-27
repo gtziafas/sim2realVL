@@ -9,6 +9,7 @@ from torch.optim import AdamW, Adam
 from torchvision import transforms as T 
 from PIL import Image
 from math import ceil
+from ..data.sim_dataset import get_sim_rgbd_scenes
 
 seed = torch.manual_seed(42)
 if torch.cuda.is_available():
@@ -43,8 +44,9 @@ LABELS = ['bowl_2',
  'soda_can_5',
  'soda_can_6']
 
+SIM_LABELS = ['mug_red', 'can_pepsi', 'flashlight_yellow', 'flashlight_red', 'can_fanta', 'cereal_box_2', 'cereal_box_3', 'flashlight_blue', 'cap_black', 'bowl_1', 'can_coke', 'cap_white', 'cereal_box_1', 'mug_yellow', 'can_sprite', 'cap_red', 'mug_green', 'bowl_2']
 
-def collate(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[Object], Tuple[Tensor, MayTensor]]:
+def collate_old(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[Object], Tuple[Tensor, MayTensor]]:
     def _collate(batch: Sequence[ObjectCrop]) -> Tuple[Tensor, MayTensor]:
         imgs, labels = zip(*[(s.image, s.label) for s in batch])
         imgs = crop_boxes_fixed(_SIZE)(list(imgs))
@@ -55,6 +57,17 @@ def collate(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[Objec
             _labels = torch.stack([torch.tensor(LABELS.index(l), dtype=longt, device=device) for l in labels])
         return imgs, _labels
     return _collate
+
+
+def collate(device="cuda"):
+    def _collate(batch):
+        imgs, labels = zip(*batch)
+        imgs = crop_boxes_fixed(_SIZE)(list(imgs))
+        imgs = [torch.tensor(img, dtype=floatt, device=device).div(0xff) for img in imgs]
+        imgs = torch.stack(imgs).view(-1, 3, *_SIZE)
+        labels = torch.stack([torch.tensor(SIM_LABELS.index(l), dtype=longt, device=device) for l in labels])
+        return imgs, labels
+    return _collate 
 
 
 def train_epoch(model, train_dl, optim, criterion):
@@ -92,7 +105,9 @@ def eval_epoch(model, dev_dl, criterion):
 def train(model: nn.Module, ne: int, bs: int, lr: float, wd: float, dr: float, pretrained: bool, save: Maybe[str] = None):
     # get data
     print('Fetching data...')
-    ds = RGBDObjectsDataset()
+    #ds = RGBDObjectsDataset()
+    import pickle
+    ds = pickle.load(open("checkpoints/sim_for_resnet.p", "rb"))
     dev_size, test_size = ceil(.1 * len(ds)), ceil(.1 * len(ds))
     train_ds, dev_ds = random_split(ds, [len(ds) - dev_size, dev_size], generator=seed)
     train_ds, test_ds = random_split(train_ds, [len(train_ds) - test_size, test_size], generator=seed)
@@ -103,7 +118,7 @@ def train(model: nn.Module, ne: int, bs: int, lr: float, wd: float, dr: float, p
     # init model, optim, loss
     print('Model init...')
     model = model(pretrained=pretrained).cuda()
-    model.fc = torch.nn.Sequential(torch.nn.Dropout(dr), torch.nn.Linear(512, 22)).cuda()
+    model.fc = torch.nn.Sequential(torch.nn.Dropout(dr), torch.nn.Linear(512, len(SIM_LABELS))).cuda()
     optim = AdamW(model.parameters(), lr=lr, weight_decay=wd)
     criterion = torch.nn.CrossEntropyLoss(reduction='mean')
 
@@ -137,7 +152,7 @@ def extract_features_vg(model: nn.Module, load_path: Maybe[str], save_path: Mayb
     # get model 
     print('Loading model...')
     model = model().cuda()
-    model.fc = torch.nn.Sequential(torch.nn.Dropout(0.), torch.nn.Linear(512, 22)).cuda()
+    model.fc = torch.nn.Sequential(torch.nn.Dropout(0.), torch.nn.Linear(512, len(SIM_LABELS))).cuda()
     if load_path:
         model.load_state_dict(torch.load(load_path))
     model.fc = torch.nn.Identity().cuda()
@@ -157,6 +172,30 @@ def extract_features_vg(model: nn.Module, load_path: Maybe[str], save_path: Mayb
         torch.save(all_feats, save_path)
     return all_feats
 
+
+@torch.no_grad()
+def extract_features_sim(ds: List[AnnotatedScene], load_resnet: str, save_path: str):
+    ds = [s for s in ds]
+    from torchvision.models import resnet18
+    resnet = resnet18()
+    resnet.fc = torch.nn.Sequential(torch.nn.Dropout(0.), torch.nn.Linear(512, len(SIM_LABELS))).cuda()
+    resnet.load_state_dict(torch.load(load_resnet))
+    resnet.fc = torch.nn.Identity()
+    resnet = resnet.eval().cpu()
+
+    all_feats = []
+    for scene in ds:
+        crops = crop_boxes_fixed((120, 120))(scene.get_crops())
+        crops = torch.stack([torch.tensor(c, dtype=floatt).div(0xff) for c in crops]).view(-1, 3, 120, 120)
+        feats = resnet(crops) 
+        for i in range(feats.shape[0]):
+            all_feats.append(feats)
+    if save_path is not None:
+        torch.save(all_feats, save_path)
+    return all_feats
+
+
+
 from torchvision.models import mobilenet_v3_small, resnet18
-#train(resnet18, 12, 128, 1e-03, 1e-02, 0.5, False, 'checkpoints/resnet18_120x120_trainedX.p')
-extract_features_vg(resnet18, None, 'checkpoints/resnet18_120_features_raw.p')
+#train(resnet18, 10, 16, 1e-03, 0, 0.25, False, 'checkpoints/sim_resnet.p')
+extract_features_sim(get_sim_rgbd_scenes(), 'checkpoints/sim_resnet.p', 'checkpoints/sim_resnet_features.p')
