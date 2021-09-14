@@ -100,7 +100,7 @@ def compare_x(obj1: AnnotatedObject, obj2: AnnotatedObject, max_width: int = 480
 
 # def compare_distance(obj1: AnnotatedObject, obj2: AnnotatedObject, depth: array) -> float:
 #     c1, c2 = box_center(obj1.box), box_center(obj2.box)
-#     #d1, d2 = depth_eval(c1, depth), depth_eval(c2, depth)
+#     d1, d2 = depth_eval(c1, depth), depth_eval(c2, depth)
 #     dist =  np.linalg.norm(array([c1[0] - c2[0], c1[1] - c2[1], d1 - d2])) # Euclidean
 #     # dist = abs(c1[0] - c2[0]) + abs(c1[1] - c2[1]) + abs(d1 - d2) # Manhattan
 #     return dist
@@ -124,8 +124,8 @@ def compare_distance(obj1: AnnotatedObject, obj2: AnnotatedObject, depths: List[
     #return 0 if abs(dist) < dist_thresh else 1 
 
 def extract_scene_graph(scene: Scene) -> SceneGraph:
-    #colors = [COLOR_MAP[l] for l in scene.labels]
-    #tags = [SPECIAL_MAP[l] for l in scene.labels]
+    # colors = [COLOR_MAP[l] for l in scene.labels]
+    # tags = [SPECIAL_MAP[l] for l in scene.labels]
     colors = [SIM_COLOR_MAP[l] for l in scene.labels]
     tags = [SIM_SPECIAL_MAP[l] for l in scene.labels]
 

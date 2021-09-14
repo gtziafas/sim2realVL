@@ -16,7 +16,7 @@ ROOT = 'datasets/rgbd-scenes'
 BOXES_TSV = 'rgbd-scenes_boxes.tsv'
 FEATURES_BINARY = 'checkpoints/resnet18_features_tuned1.p'
 CATALOGUE_TSV ='datasets/rgbd-scenes/rgbd-scenes_catalogue.csv'
-VG_TSV = 'rgbd-scenes_vg_v1.tsv'
+VG_TSV = 'rgbd-scenes_vg_v2.tsv' 
 
 
 # split image folders to rgb/ and depth/ sub-directiories for convinience

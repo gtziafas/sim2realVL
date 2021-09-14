@@ -66,7 +66,7 @@ class SimScenesVGDataset(SimScenesDataset):
         self.objects_flat = sum([[o] * len(o) for o in self.objects], [])
         self.truths = sum([np.eye(len(l), dtype=int).tolist() for l in self.labels], [])
 
-    @lru_cache(maxsize=None)
+    #@lru_cache(maxsize=None)
     def get_image(self, n: int) -> array:
         return cv2.imread(os.path.join(self.root, str(self.image_ids_flat[n]) + '.jpg'))
 
@@ -95,8 +95,8 @@ class SimScenesVGDataset(SimScenesDataset):
 
 
 def get_sim_rgbd_scenes():
-    return SimScenesDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data.csv")
+    return SimScenesDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_big.csv")
 
 
 def get_sim_rgbd_scenes_vg():
-    return SimScenesVGDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_vg.csv")
+    return SimScenesVGDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_vg_big.csv")

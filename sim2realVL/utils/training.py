@@ -11,8 +11,8 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
     
     all_preds, all_labels = [], []
     epoch_loss = 0
-    #total_correct = 0
-    for batch_idx, (imgs, words, truths, boxes) in dl:
+    total_correct = 0
+    for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
         preds = model.forward([imgs, words, boxes])
         loss = criterion(preds, truths.argmax(-1))
 
@@ -22,14 +22,15 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
         optim.zero_grad()
 
         # metrics
-        all_preds.extend(preds.detach().cpu())
-        all_labels.extend(truths.detach().cpu())
+        #all_preds.extend(preds.detach().cpu())
+        #all_labels.extend(truths.detach().cpu())
         epoch_loss += loss.item()
-        #preds[truths==ignore_idx] = -1e03
-        #total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
+        preds[truths==-1] = -1e03
+        total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
     epoch_loss /= len(dl)
 
-    return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
+    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct/len(dl.dataset), 4)}
+    #return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
 
 
 @torch.no_grad()
@@ -37,19 +38,20 @@ def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module, metrics_f
     model.eval()
 
     all_preds, all_labels = [], []
-    #total_correct = 0
+    total_correct = 0
     epoch_loss = 0
-    for batch_idx, (imgs, words, truths, boxes) in dl:
+    for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
         preds = model.forward([imgs, words, boxes])
         loss = criterion(preds, truths.argmax(-1))
-        all_preds.extend(preds.cpu())
-        all_labels.extend(truths.cpu())
+        #all_preds.extend(preds.cpu())
+        #all_labels.extend(truths.cpu())
         epoch_loss += loss.item()
-        #preds[truths==ignore_idx] = -1e03
-        #total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
-    epoch_loss /= num_batches
+        preds[truths==-1] = -1e03
+        total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
+    epoch_loss /= len(dl)
     
-    return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
+    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct/len(dl.dataset), 4)}
+    #return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
 
 
 class Trainer(ABC):
@@ -86,7 +88,7 @@ class Trainer(ABC):
                     torch.save(self.model.state_dict(), with_save)
 
                 if self.test_dl is not None:
-                    self.logs['test'].append({'epoch': epoch+1, **eval_epoch(self.model, self.test_dl, self.criterion)})
+                    self.logs['test'].append({'epoch': epoch+1, **eval_epoch(self.model, self.test_dl, self.criterion, self.metrics_fn)})
 
             else:
                 patience -= 1

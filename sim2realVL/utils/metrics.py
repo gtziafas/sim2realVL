@@ -16,7 +16,7 @@ def vg_metrics(preds: List[Tensor], truths: List[Tensor], ignore_idx: int = -1) 
     correct_items[truths == ignore_idx] = 1
 
     full_correct = correct_items.prod(dim=1)
-    num_full_correct = full_corect.sum().item()
+    num_full_correct = full_correct.sum().item()
 
     num_correct_items = correct_items.sum().item()
     num_masked_items = len(truths[truths == ignore_idx])

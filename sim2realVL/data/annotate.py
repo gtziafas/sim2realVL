@@ -18,7 +18,8 @@ def spatial_replace(idx: str, graph: SceneGraph, chance: float):
         elif chance < 0.8:
             return  graph.nodes[token_idx].color + ' ' + graph.nodes[token_idx].category
         else:
-            return choice(graph.nodes[token_idx].special) 
+            #return choice(graph.nodes[token_idx].special) 
+            return  graph.nodes[token_idx].color + ' ' + graph.nodes[token_idx].category
             
     # identify closest object and make sure its not the ambiguous one
     dists = graph.edges[idx, :, -1]
@@ -63,8 +64,8 @@ def visual_replace(idx: int, graph: SceneGraph):
     
     else:
         # replace with special tag from catalogue
-        return choice(obj.special)
-       
+        #return choice(obj.special)
+        return obj.color + ' ' + obj.category
 
 
 def randomly_replace(idx: int, graph: SceneGraph):
@@ -124,8 +125,8 @@ def generate_refex(scenes: List[Scene]) -> List[List[str]]:
                         if chance < 0.5:
                             _refex.append(color + ' ' + cat)
                         else:
-                            _refex.append(choice(graph.nodes[idx].special))
-                            #_refex.append(color + ' ' + cat)
+                            #_refex.append(choice(graph.nodes[idx].special))
+                            _refex.append(color + ' ' + cat)
 
                     # else we have to use spatial relationship
                     else:
@@ -152,16 +153,16 @@ def massage_refex(refex: List[List[str]], scenes: List[Scene]):
         graph = extract_scene_graph(scene)
 
         # FOR REAL
-        # # if same as previous, randomly add some content to some captions
+        # if same as previous, randomly add some content to some captions
         # if _refex != previous:
         #     previous = _refex
         #     continue
 
         # else:
-            # identify objects that are captioned by their label
-            # obj_ids =  [i for i, obj in enumerate(graph.nodes) if obj.category == _refex[i]]
-            # _refex = [randomly_replace(i, graph) if i in obj_ids else c for i, c in enumerate(_refex)]
-            # refex[idx] = _refex
+        #     # identify objects that are captioned by their label
+        #     obj_ids =  [i for i, obj in enumerate(graph.nodes) if obj.category == _refex[i]]
+        #     _refex = [randomly_replace(i, graph) if i in obj_ids else c for i, c in enumerate(_refex)]
+        #     refex[idx] = _refex
     
         # FOR SIM
         obj_ids =  [i for i, obj in enumerate(graph.nodes) if obj.category == _refex[i]]

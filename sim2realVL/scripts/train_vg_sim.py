@@ -90,7 +90,7 @@ def main(num_epochs: int,
     
     if not kfold:
         # random split
-        dev_size, test_size = ceil(len(ds) * .15), 0
+        dev_size, test_size = ceil(len(ds) * .10), 0
         train_ds, dev_ds = random_split(ds, [len(ds) - dev_size, dev_size])
         #train_ds, test_ds = random_split(train_ds, [len(train_ds) - test_size, test_size])
         print('Training on random train-dev-test split:')

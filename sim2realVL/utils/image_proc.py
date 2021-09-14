@@ -132,3 +132,7 @@ def crop_boxes_fixed(desired_shape: Tuple[int, int]) -> Callable[[List[array]], 
         return imgs
     
     return _crop_boxes_fixed
+
+
+def destroy():
+    cv2.destroyAllWindows()

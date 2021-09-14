@@ -46,7 +46,7 @@ LABELS = ['bowl_2',
 
 SIM_LABELS = ['mug_red', 'can_pepsi', 'flashlight_yellow', 'flashlight_red', 'can_fanta', 'cereal_box_2', 'cereal_box_3', 'flashlight_blue', 'cap_black', 'bowl_1', 'can_coke', 'cap_white', 'cereal_box_1', 'mug_yellow', 'can_sprite', 'cap_red', 'mug_green', 'bowl_2']
 
-def collate_old(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[Object], Tuple[Tensor, MayTensor]]:
+def collate(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[Object], Tuple[Tensor, MayTensor]]:
     def _collate(batch: Sequence[ObjectCrop]) -> Tuple[Tensor, MayTensor]:
         imgs, labels = zip(*[(s.image, s.label) for s in batch])
         imgs = crop_boxes_fixed(_SIZE)(list(imgs))
@@ -55,11 +55,11 @@ def collate_old(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[O
         _labels = None
         if supervised:
             _labels = torch.stack([torch.tensor(LABELS.index(l), dtype=longt, device=device) for l in labels])
-        return imgs, _labels
+        return imgs.to(device), _labels.to(device)
     return _collate
 
 
-def collate(device="cuda"):
+def collate_other(device="cuda"):
     def _collate(batch):
         imgs, labels = zip(*batch)
         imgs = crop_boxes_fixed(_SIZE)(list(imgs))
@@ -105,9 +105,9 @@ def eval_epoch(model, dev_dl, criterion):
 def train(model: nn.Module, ne: int, bs: int, lr: float, wd: float, dr: float, pretrained: bool, save: Maybe[str] = None):
     # get data
     print('Fetching data...')
-    #ds = RGBDObjectsDataset()
-    import pickle
-    ds = pickle.load(open("checkpoints/sim_for_resnet.p", "rb"))
+    ds = RGBDObjectsDataset()
+    # import pickle
+    # ds = pickle.load(open("checkpoints/sim_for_resnet.p", "rb"))
     dev_size, test_size = ceil(.1 * len(ds)), ceil(.1 * len(ds))
     train_ds, dev_ds = random_split(ds, [len(ds) - dev_size, dev_size], generator=seed)
     train_ds, test_ds = random_split(train_ds, [len(train_ds) - test_size, test_size], generator=seed)
@@ -118,7 +118,7 @@ def train(model: nn.Module, ne: int, bs: int, lr: float, wd: float, dr: float, p
     # init model, optim, loss
     print('Model init...')
     model = model(pretrained=pretrained).cuda()
-    model.fc = torch.nn.Sequential(torch.nn.Dropout(dr), torch.nn.Linear(512, len(SIM_LABELS))).cuda()
+    model.fc = torch.nn.Sequential(torch.nn.Dropout(dr), torch.nn.Linear(512, len(LABELS))).cuda()
     optim = AdamW(model.parameters(), lr=lr, weight_decay=wd)
     criterion = torch.nn.CrossEntropyLoss(reduction='mean')
 
@@ -163,10 +163,11 @@ def extract_features_vg(model: nn.Module, load_path: Maybe[str], save_path: Mayb
     all_feats = []
     for ids in idces:
         scene = ds[ids[0]]
-        crops = scene.get_crops()
-        crops = torch.stack([tf(Image.fromarray(c)) for c in crops]).cuda()    # N x 3 x H x W
-        all_feats.append(model(crops))    # N x 512
-
+        crops = crop_boxes_fixed((120, 120))(scene.get_crops())
+        crops = torch.stack([torch.tensor(c, dtype=floatt, device='cuda').div(0xff) for c in crops]).view(-1, 3, 120, 120)
+        feats = model(crops) 
+        for i in range(feats.shape[0]):
+            all_feats.append(feats)
     if save_path is not None:
         print(f'Saving in {save_path}...')
         torch.save(all_feats, save_path)
@@ -195,7 +196,6 @@ def extract_features_sim(ds: List[AnnotatedScene], load_resnet: str, save_path: 
     return all_feats
 
 
-
 from torchvision.models import mobilenet_v3_small, resnet18
-#train(resnet18, 10, 16, 1e-03, 0, 0.25, False, 'checkpoints/sim_resnet.p')
-extract_features_sim(get_sim_rgbd_scenes(), 'checkpoints/sim_resnet.p', 'checkpoints/sim_resnet_features.p')
+#train(resnet18, 10, 32, 1e-03, 0, 0.25, False, 'checkpoints/resnet18_real.p')
+extract_features_sim(get_sim_rgbd_scenes(), 'checkpoints/resnet18_sim.p', 'checkpoints/sim_visual_features.p')
