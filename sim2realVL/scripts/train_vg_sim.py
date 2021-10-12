@@ -68,12 +68,12 @@ def main(num_epochs: int,
         # optionally test in separate split, given from a path directory as argument
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
-        #model = default_vg_model().to(device)
+        model = get_default_model().to(device)
         #model = fast_vg_model().to(device)
         #resnet = resnet18(pretrained=False)
         #resnet.fc = torch.nn.Identity()
-        model = MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
-                                fusion_dim=200, num_fusion_layers=1, with_downsample=True).to(device)
+        #model = MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
+        #                        fusion_dim=200, num_fusion_layers=1, with_downsample=True).to(device)
         #model = MultiLabelMHAVG(visual_encoder=None, fusion_dim=300, num_heads=3).to(device)
         if load_path is not None:
             model.load_pretrained(load_path)
@@ -82,7 +82,8 @@ def main(num_epochs: int,
         trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, metrics_fn = vg_metrics,
                 target_metric="accuracy", early_stopping=early_stopping)
         
-        return trainer.iterate(num_epochs, with_save=save_path, print_log=print_log)
+        best = trainer.iterate(num_epochs, with_save=save_path, print_log=print_log)
+        return best, trainer.logs 
 
     # get data
     print('Loading...')
@@ -94,7 +95,7 @@ def main(num_epochs: int,
         train_ds, dev_ds = random_split(ds, [len(ds) - dev_size, dev_size])
         #train_ds, test_ds = random_split(train_ds, [len(train_ds) - test_size, test_size])
         print('Training on random train-dev-test split:')
-        best = train(train_ds, dev_ds, None)
+        best, logs = train(train_ds, dev_ds, None)
         print(f'Results random split: {best}')
 
     else:
@@ -105,11 +106,13 @@ def main(num_epochs: int,
         for iteration, (train_idces, dev_idces) in enumerate(_kfold):
             train_ds = [s for i, s in enumerate(ds) if i in train_idces]
             dev_ds = [s for i, s in enumerate(ds) if i in dev_idces]
-            best = train(train_ds, dev_ds, None)
+            best, logs = train(train_ds, dev_ds, None)
             print(f'Results {kfold}-fold, iteration {iteration+1}: {best}')
             accu += best['accuracy']
         print(f'Average accuracy {kfold}-fold: {accu/kfold}')
 
+    print([i['loss'] for i in logs['train']])
+    print([i['loss'] for i in logs['dev']]) 
 
 
 if __name__ == "__main__":

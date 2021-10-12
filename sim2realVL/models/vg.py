@@ -143,6 +143,7 @@ class MultiLabelRNNVG(MultiLabelVG):
         return self.fuse(vfeats, tcontext, boxes)
 
     def fuse(self, vfeats: Tensor, tcontext: Tensor, boxes: Tensor) -> Tensor:
+        #boxes[...] = 0.1
         fusion = torch.cat((vfeats, tcontext, boxes), dim=-1) # B x N x (Dv+Dt+4)
         if self.with_downsample:
             fusion = self.downsample(fusion).tanh()  # B x N x Df
@@ -236,7 +237,8 @@ def get_default_model():
 
 
 def fast_vg_model():
-  return MultiLabelMLPVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1))
+  return MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
+                                fusion_dim=200, num_fusion_layers=1, with_downsample=True)
 
 
 def make_vg_dataset(ds: RGBDScenesVG, 
@@ -273,9 +275,7 @@ def make_vg_dataset(ds: RGBDScenesVG,
   else:
     all_feats = torch.load(fast)
     for i, scene in enumerate(ds):
-      unique_index = [n for n, ids in enumerate(idces) if i in ids]
-      assert len(unique_index) == 1
-      feats = all_feats[unique_index[0]]
+      feats = all_feats[i]
       query = we([scene.query])[0]
       query = torch.tensor(query, dtype=floatt)
       truth = torch.tensor(scene.truth, dtype=longt)
