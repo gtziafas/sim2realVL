@@ -134,17 +134,14 @@ class RGBDScenesDataset(FromTableDataset):
         return len(self.unique_scenes)
 
     def __getitem__(self, n: int) -> Scene:
-        rgb = self.get_image(n)
-        depth = self.get_depth(n)
-        
         # in scenes version we do not need to save each box
         objects = [Object(label=l, category=c, box=b) for l, c, b in zip(self.labels[n], self.categories[n], self.boxes[n])]
         iid = self.unique_scenes[n].split('_')[-1].split('.png')[0]
-        return Scene(environment=self.environments[n], image_id=iid, rgb=rgb, depth=depth, objects=objects)
+        return Scene(environment=self.environments[n], image_id=iid, objects=objects)
 
     def show(self, n: int):
         scene = self.__getitem__(n)
-        img = scene.rgb.copy()
+        img = self.get_image(n)
         for obj in scene.objects:
             img = cv2.putText(img, obj.label, (obj.box.x, obj.box.y), fontFace=0, fontScale=1, color=(0,0,0xff))
             img = cv2.rectangle(img, (obj.box.x, obj.box.y), (obj.box.x+obj.box.w, obj.box.y+obj.box.h), (0,0,0xff), 2)

@@ -25,10 +25,33 @@ class Box:
 
 
 @dataclass
+class Rectangle:
+    # coordinates in (x,y) cv2-like frame
+    x1: int 
+    y1: int
+    x2: int 
+    y2: int 
+    x3: int 
+    y3: int
+    x4: int 
+    y4: int 
+
+
+@dataclass
 class Object:
     label: str
     category: str
-    box: Box 
+    box: Box
+
+
+@dataclass
+class ObjectSim:
+    label: str
+    category: str
+    bounding_box: Box
+    rectangle: Rectangle
+    center_of_mass: Tuple[int, int]
+    position_2d: Tuple[float, float]
 
 
 @dataclass
@@ -40,8 +63,6 @@ class ObjectCrop(Object):
 class Scene:
     environment: str
     image_id: str
-    rgb: array
-    depth: array
     objects: Sequence[Object]
 
     @property
@@ -51,6 +72,11 @@ class Scene:
     @property
     def boxes(self):
         return [o.box for o in self.objects]
+
+
+@dataclass
+class SceneRGB(Scene):
+    image: array
 
     def get_crops(self):
         return [self.rgb[o.box.y : o.box.y+o.box.h, o.box.x : o.box.x+o.box.w] for o in self.objects]

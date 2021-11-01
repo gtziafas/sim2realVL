@@ -16,7 +16,7 @@ CATEGORY_MAP = {
 }
 
 
-class SimScenesDataset:
+class SimScenesOldDataset:
     def __init__(self, images_path: str, csv_path: str):
         self.root = images_path
         self.table = pd.read_table(csv_path)
@@ -54,10 +54,78 @@ class SimScenesDataset:
 
     def inspect(self):
         for n in range(self.__len__()):
-            self.show(n, str(self.image_ids[n]) + '.jpg')
+            self.show(n)
 
 
-class SimScenesVGDataset(SimScenesDataset):
+class SimScenesDataset:
+    def __init__(self, images_path: str, csv_path: str):
+        self.root = images_path
+        self.table = pd.read_table(csv_path)
+        self.image_ids = self.table['image_id'].tolist()
+        self.labels = [row.split(',') for row in self.table['label'].tolist()]
+        self.pos_2d = [[float(x.strip("()")) for x in p.split(',')] for p in self.table['2D_position'].tolist()]
+        self.pos_2d = [[(p[i], p[i+1]) for i in range(0, len(p)-1, 2)] for p in self.pos_2d]
+        self.centers = [[int(x.strip("()")) for x in c.split(',')] for c in self.table['RGB_center_of_mass'].tolist()]
+        self.centers = [[(c[i], c[i+1]) for i in range(0, len(c)-1, 2)] for c in self.centers]
+        self.boxes = [[int(x.strip("()")) for x in b.split(',')] for b in self.table['RGB_bounding_box'].tolist()]
+        self.boxes = [[Box(*b[i:i+4]) for i in range(0, len(b)-1, 4)] for b in self.boxes]
+        self.rects = [[int(x.strip("()")) for x in r.split(',')] for r in self.table['RGB_rotated_box'].tolist()]
+        self.rects = [[Rectangle(*r[i:i+8]) for i in range(0, len(r)-1, 8)] for r in self.rects]
+        self.categories = [[CATEGORY_MAP[l.split('_')[0]] for l in labs] for labs in self.labels]
+        self.objects = [[ObjectSim(l, cat, b, r, c, p) for l, cat, p, c, b, r in zip(ls, cats, ps, cs, bs, rs)] 
+                        for ls, cats, ps, cs, bs, rs in zip(self.labels, self.categories, self.pos_2d,
+                        self.centers, self.boxes, self.rects)]
+
+    def get_image(self, n: int) -> array:
+        return cv2.imread(os.path.join(self.root, str(self.image_ids[n]) + '.png'))
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, n: int) -> Scene:
+        return Scene(environment="sim", 
+                     image_id=self.image_ids[n], 
+                     objects=self.objects[n])
+
+    def show(self, n: int):
+        scene = self.__getitem__(n)
+        img = self.get_image(n).copy()
+        for obj in scene.objects:
+            x, y, w, h = obj.bounding_box
+            img = cv2.putText(img, obj.label, (x, y), fontFace=0, fontScale=1, color=(0,0,0xff))
+            img = cv2.rectangle(img, (x, y), (x+w, y+h), (0,0,0xff), 2)
+        show(img, str(self.image_ids[n]))
+
+    def show_id(self, id: int):
+        self.show(self.image_ids.index(id))
+
+    def inspect(self):
+        for n in range(self.__len__()):
+            self.show(n)
+
+    def massage(self, from_, to_):
+        drop = []
+        for i in range(from_, to_):
+            scene = self.__getitem__(i)
+            img = self.get_image(i).copy()
+            for obj in scene.objects:
+                x, y, w, h = obj.bounding_box.x, obj.bounding_box.y, obj.bounding_box.w, obj.bounding_box.h
+                img = cv2.putText(img, obj.label, (x, y), fontFace=0, fontScale=1, color=(0,0,0xff))
+                img = cv2.rectangle(img, (x, y), (x+w, y+h), (0,0,0xff), 2)    
+        
+            cv2.imshow(str(self.image_ids[i]), img)
+            while True:
+                key = cv2.waitKey(1) & 0xff
+                if key == ord('q'):
+                    break
+                elif key == ord('m'):
+                    drop.append(self.image_ids[i])
+                    break
+            cv2.destroyWindow(str(self.image_ids[i]))
+        return drop
+
+
+class SimScenesVGOldDataset(SimScenesDataset):
     def __init__(self, images_path, csv_path):
         super().__init__(images_path, csv_path)
         self.querries = sum([row.split(',') for row in self.table['querries'].tolist()], [])
@@ -94,9 +162,17 @@ class SimScenesVGDataset(SimScenesDataset):
         show(img, str(self.image_ids_flat[n]) + '.jpg')
 
 
+def get_sim_rgbd_scenes_old():
+    return SimScenesOldDataset("datasets/SIM/rgbd-scenes_old/Images", "datasets/SIM/rgbd-scenes_old/data_big.csv")
+
+
+def get_sim_rgbd_scenes_vg_old():
+    return SimScenesVGOldDataset("datasets/SIM/rgbd-scenes_old/Images", "datasets/SIM/rgbd-scenes_old/data_vg_big.csv")
+
+
 def get_sim_rgbd_scenes():
-    return SimScenesDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_big.csv")
+    return SimScenesDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data.csv")
 
 
 def get_sim_rgbd_scenes_vg():
-    return SimScenesVGDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_vg_big.csv")
+    return SimScenesVGOldDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_vg.csv")
