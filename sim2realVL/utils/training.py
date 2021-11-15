@@ -1,20 +1,21 @@
 from ..types import *
-from ..utils.metrics import Metrics, MetricsFn, vg_metrics 
+from ..utils.metrics import Metrics, vg_metrics
 
 import torch
 import torch.nn as nn 
 from torch.utils.data import DataLoader
 
 
-def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module, metrics_fn: MetricsFn) -> Metrics:
+def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module,
+                ignore_index: int = -1) -> Metrics:
     model.train()
     
     all_preds, all_labels = [], []
     epoch_loss = 0
-    total_correct = 0
+    total_correct, total = 0, 0
     for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
         preds = model.forward([imgs, words, boxes])
-        loss = criterion(preds, truths.argmax(-1))
+        loss = criterion(preds, truths.float())
 
         # backprop
         loss.backward()
@@ -22,36 +23,72 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
         optim.zero_grad()
 
         # metrics
-        #all_preds.extend(preds.detach().cpu())
-        #all_labels.extend(truths.detach().cpu())
         epoch_loss += loss.item()
-        preds[truths==-1] = -1e03
-        total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
-    epoch_loss /= len(dl)
+        num_correct, num_total = vg_metrics(preds.sigmoid().ge(0.5), truths)
+        total_correct += num_correct
+        total += num_total
 
-    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct/len(dl.dataset), 4)}
-    #return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
+    epoch_loss /= len(dl)
+    accuracy = total_correct / total
+    return {'loss': round(epoch_loss, 5), 'accuracy': round(accuracy, 4)}
 
 
 @torch.no_grad()
-def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module, metrics_fn: MetricsFn) -> Metrics:
+def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module, ignore_index: int = -1) -> Metrics:
     model.eval()
 
     all_preds, all_labels = [], []
-    total_correct = 0
+    total_correct, total = 0, 0
     epoch_loss = 0
     for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
         preds = model.forward([imgs, words, boxes])
-        loss = criterion(preds, truths.argmax(-1))
-        #all_preds.extend(preds.cpu())
-        #all_labels.extend(truths.cpu())
+        loss = criterion(preds, truths.float())
         epoch_loss += loss.item()
-        preds[truths==-1] = -1e03
-        total_correct += (preds.argmax(-1) == truths.argmax(-1)).sum().item()
-    epoch_loss /= len(dl)
+        num_correct, num_total = vg_metrics(preds.sigmoid().ge(0.5), truths)
+        total_correct += num_correct
+        total += num_total
     
-    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct/len(dl.dataset), 4)}
-    #return {'loss': round(epoch_loss, 5), **metrics_fn(all_preds, all_labels)}
+    epoch_loss /= len(dl)
+    accuracy = total_correct / total
+    return {'loss': round(epoch_loss, 5), 'accuracy': round(accuracy, 4)}
+
+
+def train_epoch_classifier(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module) -> Metrics:
+    model.train()
+    
+    epoch_loss = 0
+    total_correct = 0
+    for batch_idx, (x, y) in enumerate(dl):
+        preds = model.forward(x)
+        loss = criterion(preds, y)
+
+        # backprop
+        loss.backward()
+        optim.step()
+        optim.zero_grad()
+
+        # metrics
+        epoch_loss += loss.item()
+        total_correct += (preds.argmax(-1) == y).sum().item()
+    epoch_loss /= len(dl)
+    total_correct /= len(dl.dataset) 
+    
+    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct, 4)}
+
+
+def eval_epoch_classifier(model: nn.Module, dl: DataLoader, criterion: nn.Module) -> Metrics:
+    model.eval()
+    
+    epoch_loss = 0
+    total_correct = 0
+    for batch_idx, (x, y) in enumerate(dl):
+        preds = model.forward(x)
+        loss = criterion(preds, y)
+        epoch_loss += loss.item()
+        total_correct += (preds.argmax(-1) == y).sum().item()
+    epoch_loss /= len(dl)
+    total_correct /= len(dl.dataset) 
+    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct, 4)}
 
 
 class Trainer(ABC):
@@ -60,18 +97,20 @@ class Trainer(ABC):
             dls: Tuple[DataLoader, ...],
             optimizer: Optimizer, 
             criterion: nn.Module,
-            metrics_fn: MetricsFn, 
             target_metric: str,
+            train_fn: Map[Any, Metrics] = train_epoch,
+            eval_fn: Map[Any, Metrics] = eval_epoch,
             early_stopping: Maybe[int] = None):
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
-        self.metrics_fn = metrics_fn
         self.train_dl, self.dev_dl, self.test_dl = dls
         self.logs = {'train': [], 'dev': [], 'test': []}
         self.target_metric = target_metric
         self.trained_epochs = 0
         self.early_stop_patience = early_stopping
+        self.train_fn = train_fn
+        self.eval_fn = eval_fn
 
     def iterate(self, num_epochs: int, print_log: bool = False, with_save: Maybe[str] = None) -> Metrics:
         best = {self.target_metric: 0.}
@@ -88,7 +127,7 @@ class Trainer(ABC):
                     torch.save(self.model.state_dict(), with_save)
 
                 if self.test_dl is not None:
-                    self.logs['test'].append({'epoch': epoch+1, **eval_epoch(self.model, self.test_dl, self.criterion, self.metrics_fn)})
+                    self.logs['test'].append({'epoch': epoch+1, **self.eval_epoch(self.model, self.test_dl, self.criterion)})
 
             else:
                 patience -= 1
@@ -118,7 +157,7 @@ class Trainer(ABC):
             print('==' * 72)
 
     def train_epoch(self):
-        return train_epoch(self.model, self.train_dl, self.optimizer, self.criterion, self.metrics_fn)
+        return self.train_fn(self.model, self.train_dl, self.optimizer, self.criterion)
 
     def eval_epoch(self):
-        return eval_epoch(self.model, self.dev_dl, self.criterion, self.metrics_fn)
+        return self.eval_fn(self.model, self.dev_dl, self.criterion)

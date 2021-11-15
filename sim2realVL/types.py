@@ -48,7 +48,7 @@ class Object:
 class ObjectSim:
     label: str
     category: str
-    bounding_box: Box
+    box: Box
     rectangle: Rectangle
     center_of_mass: Tuple[int, int]
     position_2d: Tuple[float, float]
@@ -63,6 +63,8 @@ class ObjectCrop(Object):
 class Scene:
     environment: str
     image_id: str
+    #rgb: array
+    #depth: array
     objects: Sequence[Object]
 
     @property
@@ -72,6 +74,9 @@ class Scene:
     @property
     def boxes(self):
         return [o.box for o in self.objects]
+
+    # def get_crops(self):
+    #     return [self.rgb[o.box.y : o.box.y+o.box.h, o.box.x : o.box.x+o.box.w] for o in self.objects]
 
 
 @dataclass
@@ -85,17 +90,23 @@ class SceneRGB(Scene):
 @dataclass
 class AnnotatedObject(Object):
     color: List[str]
-    # shape: List[str]
-    # material: List[str]
-    # general: List[str]
     special: List[str]
 
+@dataclass
+class AnnotatedObjectSim(ObjectSim):
+    color: str
+    special: List[str]
 
 @dataclass
 class SceneGraph:
-    nodes: Sequence[AnnotatedObject]
+    nodes: Sequence[AnnotatedObjectSim]
     edges: array
 
+    def print(self):
+        ...
+
+    def render(self):
+        ...
 
 @dataclass
 class AnnotatedScene(Scene):

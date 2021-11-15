@@ -9,7 +9,7 @@ from torch.optim import AdamW, Adam
 from torchvision import transforms as T 
 from PIL import Image
 from math import ceil
-from ..data.sim_dataset import get_sim_rgbd_scenes
+from ..data.sim_dataset import get_sim_rgbd_scenes_old
 
 seed = torch.manual_seed(42)
 if torch.cuda.is_available():
@@ -44,7 +44,17 @@ LABELS = ['bowl_2',
  'soda_can_5',
  'soda_can_6']
 
-SIM_LABELS = ['mug_red', 'can_pepsi', 'flashlight_yellow', 'flashlight_red', 'can_fanta', 'cereal_box_2', 'cereal_box_3', 'flashlight_blue', 'cap_black', 'bowl_1', 'can_coke', 'cap_white', 'cereal_box_1', 'mug_yellow', 'can_sprite', 'cap_red', 'mug_green', 'bowl_2']
+SIM_LABELS = ['mug_red', 'can_pepsi', 'flashlight_black', 'flashlight_yellow', 'flashlight_red', 'can_fanta', 'cereal_box_2', 'cereal_box_3', 'flashlight_blue', 'cap_black', 'bowl_1', 'can_coke', 'cap_white', 'cereal_box_1', 'mug_yellow', 'can_sprite', 'cap_red', 'mug_green', 'bowl_2']
+
+
+def collate_empty(device: str = 'cuda'):
+    def _collate(batch):
+        imgs ,labels = zip(*batch)
+        imgs = torch.stack(imgs).view(-1, 3, *_SIZE)
+        labels = torch.stack(labels)
+        return imgs.to(device), labels.to(device)
+    return _collate 
+
 
 def collate(device: str = 'cuda', supervised: bool = True) -> Map[Sequence[Object], Tuple[Tensor, MayTensor]]:
     def _collate(batch: Sequence[ObjectCrop]) -> Tuple[Tensor, MayTensor]:
@@ -105,20 +115,21 @@ def eval_epoch(model, dev_dl, criterion):
 def train(model: nn.Module, ne: int, bs: int, lr: float, wd: float, dr: float, pretrained: bool, save: Maybe[str] = None):
     # get data
     print('Fetching data...')
-    ds = RGBDObjectsDataset()
+    #ds = RGBDObjectsDataset()
     # import pickle
     # ds = pickle.load(open("checkpoints/sim_for_resnet.p", "rb"))
-    dev_size, test_size = ceil(.1 * len(ds)), ceil(.1 * len(ds))
+    ds = torch.load("checkpoints/TORA_sim_objects_dataset.p")
+    dev_size, test_size = ceil(.15 * len(ds)), ceil(.05 * len(ds))
     train_ds, dev_ds = random_split(ds, [len(ds) - dev_size, dev_size], generator=seed)
     train_ds, test_ds = random_split(train_ds, [len(train_ds) - test_size, test_size], generator=seed)
-    train_dl = DataLoader(train_ds, shuffle=True, batch_size=bs, collate_fn=collate(), worker_init_fn=seed)
-    dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=bs, collate_fn=collate(), worker_init_fn=seed)
-    test_dl = DataLoader(test_ds, shuffle=False, batch_size=bs, collate_fn=collate(), worker_init_fn=seed)
+    train_dl = DataLoader(train_ds, shuffle=True, batch_size=bs, collate_fn=collate_empty(), worker_init_fn=seed)
+    dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=bs, collate_fn=collate_empty(), worker_init_fn=seed)
+    test_dl = DataLoader(test_ds, shuffle=False, batch_size=bs, collate_fn=collate_empty(), worker_init_fn=seed)
 
     # init model, optim, loss
     print('Model init...')
     model = model(pretrained=pretrained).cuda()
-    model.fc = torch.nn.Sequential(torch.nn.Dropout(dr), torch.nn.Linear(512, len(LABELS))).cuda()
+    model.fc = torch.nn.Sequential(torch.nn.Dropout(dr), torch.nn.Linear(512, len(SIM_LABELS))).cuda()
     optim = AdamW(model.parameters(), lr=lr, weight_decay=wd)
     criterion = torch.nn.CrossEntropyLoss(reduction='mean')
 
@@ -197,5 +208,5 @@ def extract_features_sim(ds: List[AnnotatedScene], load_resnet: str, save_path: 
 
 
 from torchvision.models import mobilenet_v3_small, resnet18
-#train(resnet18, 10, 32, 1e-03, 0, 0.25, False, 'checkpoints/resnet18_real.p')
-extract_features_sim(get_sim_rgbd_scenes(), 'checkpoints/resnet18_sim.p', 'checkpoints/sim_visual_features.p')
+#train(resnet18, 10, 32, 1e-03, 0, 0.25, False, 'checkpoints/TORA_resnet18_sim.p')
+extract_features_sim(get_sim_rgbd_scenes_old(), 'checkpoints/TORA_resnet18_sim.p', 'checkpoints/TORA_sim_visual_features.p')

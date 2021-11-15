@@ -2,6 +2,7 @@ from ..types import *
 from ..utils.word_embedder import WordEmbedder, make_word_embedder
 from ..utils.image_proc import crop_boxes_fixed
 from ..data.rgbd_scenes import RGBDScenesVG
+from ..models.visual_embedder import make_visual_embedder, custom_features
 
 import torch
 import torch.nn as nn 
@@ -51,7 +52,8 @@ class MultiLabelMLPVG(MultiLabelVG):
     def __init__(self, 
                  visual_encoder: Maybe[nn.Module],
                  text_encoder: RNNContext,
-                 visual_feat_dim: int = 512,
+                 visual_feat_dim: int = 256,
+                 hidden_dim: int = 64,
                  text_feat_dim: int = 300,
                  ):
         super().__init__()
@@ -59,9 +61,9 @@ class MultiLabelMLPVG(MultiLabelVG):
         self.d_t = text_feat_dim
         self.tenc = text_encoder
         self.venc = visual_encoder
-        self.cls = nn.Sequential(nn.Linear(self.d_v + self.d_t + 4, 256),
+        self.cls = nn.Sequential(nn.Linear(self.d_v + self.d_t + 4, hidden_dim),
                                  nn.GELU(),
-                                 nn.Linear(256, 1))
+                                 nn.Linear(hidden_dim, 1))
 
 
         # if skipping visual encoder, run other forward method
@@ -216,29 +218,35 @@ class MultiLabelMHAVG(nn.Module):
         return self.cls(attended).squeeze()
 
 
-def collate(device: str, with_boxes: bool = True, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], Tuple[Tensor, Tensor, Tensor, MayTensor]]:
+def collate(device: str, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], Tuple[Tensor, Tensor, Tensor, MayTensor]]:
     def _collate(batch: List[Tuple[Tensor, ...]]) -> Tuple[Tensor, Tensor, Tensor, MayTensor]:
-        visual, text, truths, boxes = zip(*batch)
+        visual, text, truths, position = zip(*batch)
         visual = pad_sequence(visual, batch_first=True, padding_value=ignore_idx).to(device)
         text = pad_sequence(text, batch_first=True).to(device)
         truths = pad_sequence(truths, batch_first=True, padding_value=ignore_idx).to(device)
-        boxes = pad_sequence(boxes, batch_first=True, padding_value=ignore_idx).to(device) if with_boxes else None
-        return visual, text, truths, boxes
-
+        position = pad_sequence(position, batch_first=True, padding_value=ignore_idx).to(device) 
+        return visual, text, truths, position
     return _collate
 
 
-def get_default_model():
+def onestage_vg_model_rnn():
   from torchvision.models import resnet18
   venc = resnet18()
   venc.fc = torch.nn.Identity()
   return MultiLabelRNNVG(visual_encoder=venc, text_encoder=RNNContext(300, 150, 1), 
                                 fusion_dim=200, num_fusion_layers=1, with_downsample=True)
 
+def onestage_vg_model(ve: nn.Module = custom_features()):
+  return MultiLabelMLPVG(visual_encoder=ve, text_encoder=RNNContext(300, 150, 1))  
 
-def fast_vg_model():
+
+def twostage_vg_model_rnn():
   return MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
                                 fusion_dim=200, num_fusion_layers=1, with_downsample=True)
+
+def twostage_vg_model():
+  return MultiLabelMLPVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1))
+
 
 
 def make_vg_dataset(ds: RGBDScenesVG, 

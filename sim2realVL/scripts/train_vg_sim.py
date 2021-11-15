@@ -1,9 +1,10 @@
 from ..types import *
-from ..utils.image_proc import crop_boxes_fixed
+from ..utils.image_proc import crop_box
+from ..data.sim_dataset import get_sim_rgbd_scenes_annotated
 from ..utils.training import Trainer
-from ..utils.metrics import Metrics, vg_metrics
-from ..utils.word_embedder import WordEmbedder, make_word_embedder
-from ..data.sim_dataset import get_sim_rgbd_scenes_vg
+from ..utils.word_embedder import make_word_embedder
+from ..utils.loss import BCEWithLogitsIgnore
+from ..models.visual_embedder import make_visual_embedder
 from ..models.vg import *
 
 import torch
@@ -23,30 +24,38 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(1312)
 
 
-def prepare_sim_dataset(ds: List[AnnotatedScene], 
-                        img_resize: Tuple[int, int] = (120, 120),
-                        save_path: Maybe[str] = None):
+def prepare_dataset(ds: List[AnnotatedScene], 
+                    image_loader: Callable[[int], array],
+                    pretrained_features: bool, 
+                    save: Maybe[str] = None
+                    ):
     H, W = 480, 640
     we = make_word_embedder()
+    ve = make_visual_embedder()
+
     dataset = []
+    covered_ids = {}
     for scene in tqdm(ds):
+        # dont do rendundant cropping
+        if scene.image_id not in covered_ids:
+            crops = [crop_box(image_loader(scene.image_id), o.box) for o in scene.objects]
+            feats = ve.features(crops) if pretrained_features else torch.stack(ve.tensorize(crops))
+            covered_ids[scene.image_id] = feats
+        else:
+            feats = covered_ids[scene.image_id]
+        
+        truth = torch.zeros(len(scene.objects), dtype=longt)
+        truth[scene.truth] = 1
+        position = torch.stack([torch.tensor([b.x/W, b.y/H, (b.x+b.w)/W, (b.y+b.h)/H]).float() for b in scene.boxes])
+        
         query = torch.tensor(we([scene.query])[0], dtype=floatt)
-        crops = scene.get_crops()
-        crops = crop_boxes_fixed(img_resize)(crops)
-        crops = torch.stack([torch.tensor(c, dtype=floatt).div(0xff) for c in crops]).view(-1, 3, *img_resize)
-        truth = torch.tensor(scene.truth, dtype=longt)
-        boxes = torch.stack([torch.tensor([b.x/W, b.y/H, b.w/W, b.h/H]).float() for b in scene.boxes])
-        dataset.append((crops, query, truth, boxes))
-    if save_path is not None:
-        torch.save(dataset, save_path)
+        
+        dataset.append((feats, query, truth, position))
+
+    if save is not None:
+        torch.save(dataset, save)
+
     return dataset
-
-
-def prepare_sim_feats(feats_chp: str, ds_chp: str, save_path: str):
-    ds = torch.load(ds_chp)
-    _, text, truths, boxes = zip(*ds)
-    feats = torch.load(feats_chp)
-    torch.save(list(zip(feats, text, truths, boxes)), save_path)
 
 
 def main(num_epochs: int,
@@ -54,44 +63,41 @@ def main(num_epochs: int,
          lr: float,
          wd: float,
          device: str,
-         print_log: bool,
+         console: bool,
          save_path: Maybe[str],
          load_path: Maybe[str],
          checkpoint: Maybe[str],
          early_stopping: Maybe[int],
+         onestage: bool,
          kfold: Maybe[int]
          ):
-    def train(train_ds: List[AnnotatedScene], dev_ds: List[AnnotatedScene], test_ds: Maybe[List[AnnotatedScene]] = None) -> Metrics:
+    def train(train_ds: List[AnnotatedScene], dev_ds: List[AnnotatedScene], test_ds: Maybe[List[AnnotatedScene]] = None):
         train_dl = DataLoader(train_ds, shuffle=True, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
         dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
 
         # optionally test in separate split, given from a path directory as argument
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
-        model = get_default_model().to(device)
-        #model = fast_vg_model().to(device)
-        #resnet = resnet18(pretrained=False)
-        #resnet.fc = torch.nn.Identity()
-        #model = MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
-        #                        fusion_dim=200, num_fusion_layers=1, with_downsample=True).to(device)
-        #model = MultiLabelMHAVG(visual_encoder=None, fusion_dim=300, num_heads=3).to(device)
+        model = twostage_vg_model().to(device) if not onestage else onestage_vg_model().to(device) 
         if load_path is not None:
             model.load_pretrained(load_path)
+
         optim = Adam(model.parameters(), lr=lr, weight_decay=wd)
-        criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
-        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, metrics_fn = vg_metrics,
-                target_metric="accuracy", early_stopping=early_stopping)
+        #criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
+        criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
+        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="accuracy", early_stopping=early_stopping)
         
-        best = trainer.iterate(num_epochs, with_save=save_path, print_log=print_log)
+        best = trainer.iterate(num_epochs, with_save=save_path, print_log=console)
         return best, trainer.logs 
 
     # get data
     print('Loading...')
-    ds = prepare_sim_dataset(get_sim_rgbd_scenes_vg()) if not checkpoint else torch.load(checkpoint)
+    ds = get_sim_rgbd_scenes_annotated()
+    ds = prepare_dataset(prepare_dataset(ds, ds.get_image_from_id, not onestage)) if not checkpoint else torch.load(checkpoint)
     
     if not kfold:
         # random split
-        dev_size, test_size = ceil(len(ds) * .10), 0
+        dev_size, test_size = ceil(len(ds) * .20), 0
         train_ds, dev_ds = random_split(ds, [len(ds) - dev_size, dev_size])
         #train_ds, test_ds = random_split(train_ds, [len(train_ds) - test_size, test_size])
         print('Training on random train-dev-test split:')
@@ -127,7 +133,8 @@ if __name__ == "__main__":
     #parser.add_argument('-dr', '--dropout', help='model dropout to use in training', type=float, default=0.25)
     parser.add_argument('-early', '--early_stopping', help='early stop patience (default no early stopping)', type=int, default=None)
     parser.add_argument('-lr', '--lr', help='learning rate to use in optimizer', type=float, default=1e-03)
-    parser.add_argument('--print_log', action='store_true', help='print training logs', default=False)
+    parser.add_argument('--console', action='store_true', help='print training logs', default=False)
+    parser.add_argument('--onestage', action='store_true', help='whether to train one-stage model varianet', default=False)
     parser.add_argument('-chp', '--checkpoint', help='load pre-trained visual features from file', default=None)
     parser.add_argument('-kfold', '--kfold', help='whether to do k-fold x-validation (default no)', type=int, default=None)
     

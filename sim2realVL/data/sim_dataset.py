@@ -2,6 +2,7 @@ from ..types import *
 from ..utils.image_proc import * 
 
 import pandas as pd
+import subprocess
 import os
 import cv2
 from functools import lru_cache
@@ -60,6 +61,7 @@ class SimScenesOldDataset:
 class SimScenesDataset:
     def __init__(self, images_path: str, csv_path: str):
         self.root = images_path
+        self.csv_path = csv_path
         self.table = pd.read_table(csv_path)
         self.image_ids = self.table['image_id'].tolist()
         self.labels = [row.split(',') for row in self.table['label'].tolist()]
@@ -79,6 +81,9 @@ class SimScenesDataset:
     def get_image(self, n: int) -> array:
         return cv2.imread(os.path.join(self.root, str(self.image_ids[n]) + '.png'))
 
+    def get_image_from_id(self, image_id: int) -> array:
+        return cv2.imread(os.path.join(self.root, str(image_id) + '.png'))
+
     def __len__(self):
         return len(self.labels)
 
@@ -91,10 +96,13 @@ class SimScenesDataset:
         scene = self.__getitem__(n)
         img = self.get_image(n).copy()
         for obj in scene.objects:
-            x, y, w, h = obj.bounding_box
+            x, y, w, h = obj.box.x, obj.box.y, obj.box.w, obj.box.h
+            rect = obj.rectangle
+            rect = np.int0([(rect.x1, rect.y1), (rect.x2, rect.y2), (rect.x3, rect.y3), (rect.x4, rect.y4)])
             img = cv2.putText(img, obj.label, (x, y), fontFace=0, fontScale=1, color=(0,0,0xff))
-            img = cv2.rectangle(img, (x, y), (x+w, y+h), (0,0,0xff), 2)
-        show(img, str(self.image_ids[n]))
+            img = cv2.rectangle(img, (x, y), (x+w, y+h), (0xff, 0, 0), 2)
+            img = cv2.drawContours(img, [rect], 0, (0,0,0xff), 2)
+        show(img, str(self.image_ids[n]) + ".png")
 
     def show_id(self, id: int):
         self.show(self.image_ids.index(id))
@@ -109,10 +117,12 @@ class SimScenesDataset:
             scene = self.__getitem__(i)
             img = self.get_image(i).copy()
             for obj in scene.objects:
-                x, y, w, h = obj.bounding_box.x, obj.bounding_box.y, obj.bounding_box.w, obj.bounding_box.h
+                x, y, w, h = obj.box.x, obj.box.y, obj.box.w, obj.box.h
+                rect = obj.rectangle
+                rect = np.int0([(rect.x1, rect.y1), (rect.x2, rect.y2), (rect.x3, rect.y3), (rect.x4, rect.y4)])
                 img = cv2.putText(img, obj.label, (x, y), fontFace=0, fontScale=1, color=(0,0,0xff))
-                img = cv2.rectangle(img, (x, y), (x+w, y+h), (0,0,0xff), 2)    
-        
+                img = cv2.rectangle(img, (x, y), (x+w, y+h), (0xff,0,0  ), 2)    
+                img = cv2.drawContours(img, [rect], 0, (0,0,0xff), 2)
             cv2.imshow(str(self.image_ids[i]), img)
             while True:
                 key = cv2.waitKey(1) & 0xff
@@ -125,7 +135,49 @@ class SimScenesDataset:
         return drop
 
 
-class SimScenesVGOldDataset(SimScenesDataset):
+class SimScenesAnnotatedDataset():
+    def __init__(self, root: str, csv_path: str, annot_path: str):
+        self.scenes = SimScenesDataset(root, csv_path)
+        self.root = root
+        self.table = pd.read_table(annot_path)
+        self.queries = [[q.strip("'") for q in qs.strip(']["').split(', ')] for qs in self.table["queries"].tolist()] 
+        self.truths = [[eval(t.strip("'")) for t in ts.strip(']["').split(', ')] for ts in self.table["truths"].tolist()] 
+        self.truths = [[list(t) if type(t) == tuple else t for t in ts] for ts in self.truths]
+        self.scenes = sum([[scene] * len(qs) for scene, qs in zip(self.scenes, self.queries)], [])
+        self.image_ids = [scene.image_id for scene in self.scenes]
+        self.queries = sum(self.queries, [])
+        self.truths = sum(self.truths, [])
+
+    def get_image(self, n: int) -> array:
+        return self.get_image_from_id(self.scenes[n].image_id)
+
+    def get_image_from_id(self, image_id: int) -> array:
+        return cv2.imread(os.path.join(self.root, str(image_id) + '.png'))
+
+    def __len__(self) -> int:
+        return len(self.scenes)
+
+    def __getitem__(self, n: int) -> AnnotatedScene:
+        scene = self.scenes[n]
+        return AnnotatedScene(scene.environment, scene.image_id, scene.objects,
+                              query=self.queries[n], truth=self.truths[n])
+
+    def show(self, n: int):
+        scene = self.__getitem__(n)
+        print(scene.query)
+        img = self.get_image_from_id(scene.image_id)
+        truth = [scene.truth] if type(scene.truth) == int else list(scene.truth)
+        boxes = [o.box for i, o in enumerate(scene.objects) if i in truth]
+        for b in boxes:
+            img = cv2.rectangle(img, (b.x, b.y), (b.x+b.w, b.y+b.h), (0xff,0,0), 2)
+        show(img)
+
+    def inspect(self):
+        for n in range(self.__len__()):
+            self.show(n)
+
+
+class SimScenesVGOldDataset(SimScenesOldDataset):
     def __init__(self, images_path, csv_path):
         super().__init__(images_path, csv_path)
         self.querries = sum([row.split(',') for row in self.table['querries'].tolist()], [])
@@ -171,8 +223,35 @@ def get_sim_rgbd_scenes_vg_old():
 
 
 def get_sim_rgbd_scenes():
-    return SimScenesDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data.csv")
+    return SimScenesDataset("/home/ggtz/dual_arm_ws/DATASET/Images", "~/dual_arm_ws/DATASET/data.csv")
+
+
+def get_sim_rgbd_objects():
+    ds = get_sim_rgbd_scenes()
+    crops, labels = [], []
+    for i, scene in enumerate(ds):
+        rgb = ds.get_image(i)
+        crops.extend([crop_box(rgb, o.box) for o in scene.objects])
+        labels.extend([o.label for o in scene.objects])
+    return list(zip(crops, labels))
 
 
 def get_sim_rgbd_scenes_vg():
     return SimScenesVGOldDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_vg.csv")
+
+
+def get_sim_rgbd_scenes_annotated():
+    return SimScenesAnnotatedDataset("/home/ggtz/dual_arm_ws/DATASET/Images", 
+                    "~/dual_arm_ws/DATASET/data.csv",
+                    "datasets/SIM/rgbd_scenes/data_annotated.csv")
+
+
+def remove_samples_from_dataset(ds: SimScenesDataset, sample_ids: List[int]):
+    for sid in sample_ids:
+        subprocess.call(['rm', os.path.join(ds.root, str(sid) + ".png")])
+    csv_name = ds.csv_path.split('.csv')[0] + "_filtered.csv"
+    with open(csv_name, "w+") as f:
+        f.write("\t".join(["image_id", "label", "2D_position", "RGB_center_of_mass", "RGB_bounding_box", "RGB_rotated_box"]))
+        f.write("\n")
+        _write = ["\t".join(list(map(str, row))) for row in ds.table.values.tolist() if row[0] not in sample_ids]
+        f.write("\n".join(_write))
