@@ -47,6 +47,7 @@ def x1y1x2y2_to_xywh(box: Tuple[int, ...]) -> Box:
 def crop_box(img: array, box: Box) -> array:
     return img[box.y : box.y + box.h, box.x : box.x + box.w]
 
+
 def crop_rectangle(img: array, rect: Rectangle) -> array:
     rect = np.int0([(rect.x1, rect.y1), (rect.x2, rect.y2), (rect.x3, rect.y3), (rect.x4, rect.y4)])
     mask = np.zeros((img.shape[0], img.shape[1], 3))
@@ -55,8 +56,17 @@ def crop_rectangle(img: array, rect: Rectangle) -> array:
     box = cv2.boundingRect(rect)
     return crop_box(img, Box(*box))
 
-def box_center(box: Box) -> Tuple[int, int]:
+
+def box_center(box: Box) -> Tuple[int, int] -> array:
     return box.x + box.w // 2, box.y + box.h // 2
+
+
+def crop_contour(img: array, contour: array) -> array:
+    mask = np.zeros((img.shape[0], img.shape[1], 3))
+    mask = cv2.drawContours(mask, [contour], 0, (0xff,0xff,0xff), -1)
+    box = cv2.boundingRect(contour)
+    mask[mask==0xff] = img[mask==0xff]
+    return crop_box(mask, Box(*box))
 
 
 def threshold(img: array) -> array:

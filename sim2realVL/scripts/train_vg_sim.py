@@ -35,10 +35,10 @@ def prepare_dataset(ds: List[AnnotatedScene],
 
     dataset = []
     covered_ids = {}
-    for scene in tqdm(ds):
+    for i, scene in enumerate(tqdm(ds)):
         # dont do rendundant cropping
         if scene.image_id not in covered_ids:
-            crops = [crop_box(image_loader(scene.image_id), o.box) for o in scene.objects]
+            crops = [crop_contour(image_loader(scene.image_id), ds.contours[i][j]) for j in range(len(scene.objects))]
             feats = ve.features(crops) if pretrained_features else torch.stack(ve.tensorize(crops))
             covered_ids[scene.image_id] = feats
         else:
