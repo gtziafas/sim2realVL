@@ -34,10 +34,6 @@ def show_many(imgs: List[array], legends: Maybe[List[str]] = None):
     destroy()
 
 
-def destroy():
-    cv2.destroyAllWindows()
-
-
 def x1y1x2y2_to_xywh(box: Tuple[int, ...]) -> Box:
     # convert np-style to cv2-style coordinates for box
     y1, y2, x1, x2 = box
@@ -57,7 +53,7 @@ def crop_rectangle(img: array, rect: Rectangle) -> array:
     return crop_box(img, Box(*box))
 
 
-def box_center(box: Box) -> Tuple[int, int] -> array:
+def box_center(box: Box) -> Tuple[int, int]:
     return box.x + box.w // 2, box.y + box.h // 2
 
 
@@ -65,7 +61,7 @@ def crop_contour(img: array, contour: array) -> array:
     mask = np.zeros((img.shape[0], img.shape[1], 3))
     mask = cv2.drawContours(mask, [contour], 0, (0xff,0xff,0xff), -1)
     box = cv2.boundingRect(contour)
-    mask[mask==0xff] = img[mask==0xff]
+    mask = np.where(mask == 0xff, img, 0)
     return crop_box(mask, Box(*box))
 
 
