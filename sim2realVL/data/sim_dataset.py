@@ -5,6 +5,7 @@ import pandas as pd
 import subprocess
 import os
 import cv2
+from random import sample
 from functools import lru_cache
 
 CATEGORY_MAP = {
@@ -65,18 +66,23 @@ class SimScenesDataset:
         self.table = pd.read_table(csv_path)
         self.image_ids = self.table['image_id'].tolist()
         self.labels = [row.split(',') for row in self.table['label'].tolist()]
+        self.contours =  [[eval(x.strip("()")) for x in row.split("),")] for row in self.table["RGB_contour"].tolist()]
+        self.contours = [[np.int0([[[c[i], c[i+1]]] for i in range(0, len(c)-1, 2)]) for c in row] for row in self.contours]
         self.pos_2d = [[float(x.strip("()")) for x in p.split(',')] for p in self.table['2D_position'].tolist()]
         self.pos_2d = [[(p[i], p[i+1]) for i in range(0, len(p)-1, 2)] for p in self.pos_2d]
-        self.centers = [[int(x.strip("()")) for x in c.split(',')] for c in self.table['RGB_center_of_mass'].tolist()]
-        self.centers = [[(c[i], c[i+1]) for i in range(0, len(c)-1, 2)] for c in self.centers]
-        self.boxes = [[int(x.strip("()")) for x in b.split(',')] for b in self.table['RGB_bounding_box'].tolist()]
-        self.boxes = [[Box(*b[i:i+4]) for i in range(0, len(b)-1, 4)] for b in self.boxes]
-        self.rects = [[int(x.strip("()")) for x in r.split(',')] for r in self.table['RGB_rotated_box'].tolist()]
-        self.rects = [[Rectangle(*r[i:i+8]) for i in range(0, len(r)-1, 8)] for r in self.rects]
+        moments = [[cv2.moments(c) for c in row] for row in self.contours]
+        self.centers = [[(int(M['m10']/M['m00']), int(M['m01']/M['m00'])) for M in row] for row in moments]
+        self.boxes = [[Box(*cv2.boundingRect(c)) for c in row] for row in self.contours]
+        self.rects = [[Rectangle(*sum(cv2.boxPoints(cv2.minAreaRect(c)).tolist(), [])) for c in row] for row in self.contours]          
+        # self.centers = [[int(x.strip("()")) for x in c.split(',')] for c in self.table['RGB_center_of_mass'].tolist()]
+        # self.centers = [[(c[i], c[i+1]) for i in range(0, len(c)-1, 2)] for c in self.centers]
+        # self.boxes = [[int(x.strip("()")) for x in b.split(',')] for b in self.table['RGB_bounding_box'].tolist()]
+        # self.boxes = [[Box(*b[i:i+4]) for i in range(0, len(b)-1, 4)] for b in self.boxes]
+        # self.rects = [[int(x.strip("()")) for x in r.split(',')] for r in self.table['RGB_rotated_box'].tolist()]
+        # self.rects = [[Rectangle(*r[i:i+8]) for i in range(0, len(r)-1, 8)] for r in self.rects]
         self.categories = [[CATEGORY_MAP[l.split('_')[0]] for l in labs] for labs in self.labels]
         self.objects = [[ObjectSim(l, cat, b, r, c, p) for l, cat, p, c, b, r in zip(ls, cats, ps, cs, bs, rs)] 
-                        for ls, cats, ps, cs, bs, rs in zip(self.labels, self.categories, self.pos_2d,
-                        self.centers, self.boxes, self.rects)]
+                        for ls, cats, ps, cs, bs, rs in zip(self.labels, self.categories, self.pos_2d, self.centers, self.boxes, self.rects)]  
 
     def get_image(self, n: int) -> array:
         return cv2.imread(os.path.join(self.root, str(self.image_ids[n]) + '.png'))
@@ -102,6 +108,7 @@ class SimScenesDataset:
             img = cv2.putText(img, obj.label, (x, y), fontFace=0, fontScale=1, color=(0,0,0xff))
             img = cv2.rectangle(img, (x, y), (x+w, y+h), (0xff, 0, 0), 2)
             img = cv2.drawContours(img, [rect], 0, (0,0,0xff), 2)
+            img = cv2.drawContours(img, [obj.contour], 0, (0,0xff, 0), 1)
         show(img, str(self.image_ids[n]) + ".png")
 
     def show_id(self, id: int):
@@ -223,15 +230,23 @@ def get_sim_rgbd_scenes_vg_old():
 
 
 def get_sim_rgbd_scenes():
-    return SimScenesDataset("/home/ggtz/dual_arm_ws/DATASET/Images", "~/dual_arm_ws/DATASET/data.csv")
+    return SimScenesDataset("/home/p300488/dual_arm_ws/DATASET/Images", "~/dual_arm_ws/DATASET/data.tsv")
 
 
-def get_sim_rgbd_objects():
+def get_sim_rgbd_objects(size: int = -1):
     ds = get_sim_rgbd_scenes()
+    size = size if size > -1 else len(ds)
+    keep_idces = sample(range(len(ds)), size)
     crops, labels = [], []
     for i, scene in enumerate(ds):
+        if i  not in keep_idces:
+            continue
         rgb = ds.get_image(i)
-        crops.extend([crop_box(rgb, o.box) for o in scene.objects])
+        mask = np.zeros_like(rgb)
+        for cont in ds.contours[i]:
+            mask = cv2.drawContours(mask, [cont], 0, (0xff,0xff,0xff), -1)
+        mask = np.where(mask == 0xff, rgb, 0)
+        crops.extend([crop_box(mask, o.box) for o in scene.objects])
         labels.extend([o.label for o in scene.objects])
     return list(zip(crops, labels))
 
@@ -241,8 +256,8 @@ def get_sim_rgbd_scenes_vg():
 
 
 def get_sim_rgbd_scenes_annotated():
-    return SimScenesAnnotatedDataset("/home/ggtz/dual_arm_ws/DATASET/Images", 
-                    "~/dual_arm_ws/DATASET/data.csv",
+    return SimScenesAnnotatedDataset("/home/p300488/dual_arm_ws/DATASET/Images", 
+                    "~/dual_arm_ws/DATASET/data.tsv",
                     "datasets/SIM/rgbd_scenes/data_annotated.csv")
 
 

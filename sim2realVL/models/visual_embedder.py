@@ -120,7 +120,6 @@ def make_visual_embedder(load: str = "./checkpoints/SIM_classifier.p", device = 
 
 def extract_features_from_dataset(dataset: List[Scene], 
                                   image_loader: Callable[[int], array],
-                                  weights_path: str,
                                   save: Maybe[str] = None) -> List[array]:
     VE = make_visual_embedder()
     feats = []

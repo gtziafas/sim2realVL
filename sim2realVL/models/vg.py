@@ -53,18 +53,20 @@ class MultiLabelMLPVG(MultiLabelVG):
                  visual_encoder: Maybe[nn.Module],
                  text_encoder: RNNContext,
                  visual_feat_dim: int = 256,
-                 hidden_dim: int = 64,
+                 hidden_dim: int = 128,
                  text_feat_dim: int = 300,
+                 dropout: float = 0.33
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
         self.d_t = text_feat_dim
         self.tenc = text_encoder
         self.venc = visual_encoder
+        self.dropout = nn.Dropout(dropout)
         self.cls = nn.Sequential(nn.Linear(self.d_v + self.d_t + 4, hidden_dim),
                                  nn.GELU(),
                                  nn.Linear(hidden_dim, 1))
-
+        #self.cls = nn.Linear(self.d_v + self.d_t + 4, 1)
 
         # if skipping visual encoder, run other forward method
         self.forward = self._forward_fast if visual_encoder is None else self._forward
@@ -80,6 +82,7 @@ class MultiLabelMLPVG(MultiLabelVG):
         tcontext = self.tenc(text).unsqueeze(1).repeat(1, num_boxes, 1) # B x N xDt
 
         catted = torch.cat((vfeats, boxes, tcontext), dim=-1) # B x N x (Dv+4+Dt)
+        catted = self.dropout(catted)
         return self.cls(catted).squeeze() # B x N x 1
 
     def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:

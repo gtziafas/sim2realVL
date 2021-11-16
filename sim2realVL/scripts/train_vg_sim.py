@@ -83,6 +83,7 @@ def main(num_epochs: int,
             model.load_pretrained(load_path)
 
         optim = Adam(model.parameters(), lr=lr, weight_decay=wd)
+        #optim = SGD(model.parameters(), lr=lr, momentum=.9)
         #criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
         criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
         trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="accuracy", early_stopping=early_stopping)

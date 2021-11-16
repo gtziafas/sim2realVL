@@ -6,7 +6,7 @@ from ..utils.training import Trainer, train_epoch_classifier, eval_epoch_classif
 
 import torch
 from torch.utils.data import random_split, DataLoader
-from torch.optim import AdamW
+from torch.optim import Adam
 from math import ceil
 
 # set gpu if available
@@ -42,7 +42,7 @@ def train_classifier(ne: int, bs: int, lr: float, wd: float, early: int, device:
     test_dl = DataLoader(test_ds, shuffle=False, batch_size=bs, collate_fn=collate(device, labelset), worker_init_fn=SEED)
 
     # init optimizer and objective
-    optim = AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    optim = Adam(model.parameters(), lr=lr, weight_decay=wd)
     criterion = torch.nn.CrossEntropyLoss(reduction='mean')
 
     # train

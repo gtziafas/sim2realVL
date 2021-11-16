@@ -4,7 +4,7 @@ from ..data.sim_dataset import SimScenesDataset
 import pandas as pd 
 
 
-def annotate_dataset(dataset, write_file):
+def annotate_dataset(dataset: SimScenesDataset, write_file: str):
     parser = SceneParser()
     all_queries, all_truths = [], []
     for scene in dataset:
