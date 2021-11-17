@@ -81,8 +81,9 @@ class SimScenesDataset:
         # self.rects = [[int(x.strip("()")) for x in r.split(',')] for r in self.table['RGB_rotated_box'].tolist()]
         # self.rects = [[Rectangle(*r[i:i+8]) for i in range(0, len(r)-1, 8)] for r in self.rects]
         self.categories = [[CATEGORY_MAP[l.split('_')[0]] for l in labs] for labs in self.labels]
-        self.objects = [[ObjectSim(l, cat, b, r, c, p) for l, cat, p, c, b, r in zip(ls, cats, ps, cs, bs, rs)] 
-                        for ls, cats, ps, cs, bs, rs in zip(self.labels, self.categories, self.pos_2d, self.centers, self.boxes, self.rects)]  
+        self.objects = [[ObjectSim(l, cat, co, b, r, c, p) for l, cat, co, p, c, b, r in zip(ls, cats, cos, ps, cs, bs, rs)] 
+                        for ls, cats, cos, ps, cs, bs, rs in zip(self.labels, self.categories, self.contours,
+                        self.pos_2d, self.centers, self.boxes, self.rects)]  
 
     def get_image(self, n: int) -> array:
         return cv2.imread(os.path.join(self.root, str(self.image_ids[n]) + '.png'))
@@ -130,6 +131,7 @@ class SimScenesDataset:
                 img = cv2.putText(img, obj.label, (x, y), fontFace=0, fontScale=1, color=(0,0,0xff))
                 img = cv2.rectangle(img, (x, y), (x+w, y+h), (0xff,0,0  ), 2)    
                 img = cv2.drawContours(img, [rect], 0, (0,0,0xff), 2)
+                img = cv2.drawContours(img, [obj.contour], 0, (0,0xff,0), 2)
             cv2.imshow(str(self.image_ids[i]), img)
             while True:
                 key = cv2.waitKey(1) & 0xff
@@ -242,11 +244,7 @@ def get_sim_rgbd_objects(size: int = -1):
         if i  not in keep_idces:
             continue
         rgb = ds.get_image(i)
-        mask = np.zeros_like(rgb)
-        for cont in ds.contours[i]:
-            mask = cv2.drawContours(mask, [cont], 0, (0xff,0xff,0xff), -1)
-        mask = np.where(mask == 0xff, rgb, 0)
-        crops.extend([crop_box(mask, o.box) for o in scene.objects])
+        crops.extend([crop_contour(mask, o.contour) for o in scene.objects])
         labels.extend([o.label for o in scene.objects])
     return list(zip(crops, labels))
 
