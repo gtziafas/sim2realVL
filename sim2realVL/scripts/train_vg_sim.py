@@ -1,5 +1,5 @@
 from ..types import *
-from ..utils.image_proc import crop_box
+from ..utils.image_proc import crop_box, crop_contour
 from ..data.sim_dataset import get_sim_rgbd_scenes_annotated
 from ..utils.training import Trainer
 from ..utils.word_embedder import make_word_embedder
@@ -38,7 +38,7 @@ def prepare_dataset(ds: List[AnnotatedScene],
     for i, scene in enumerate(tqdm(ds)):
         # dont do rendundant cropping
         if scene.image_id not in covered_ids:
-            crops = [crop_contour(image_loader(scene.image_id), ds.contours[i][j]) for j in range(len(scene.objects))]
+            crops = [crop_contour(image_loader(scene.image_id), o.contour) for o in scene.objects]
             feats = ve.features(crops) if pretrained_features else torch.stack(ve.tensorize(crops))
             covered_ids[scene.image_id] = feats
         else:

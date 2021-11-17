@@ -48,6 +48,7 @@ class Object:
 class ObjectSim:
     label: str
     category: str
+    contour: array
     box: Box
     rectangle: Rectangle
     center_of_mass: Tuple[int, int]
