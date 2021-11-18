@@ -5,6 +5,9 @@ import torch
 import torch.nn as nn 
 
 
+class MaskOut(nn.Module):
+	def __init__(self)
+
 class HarmonicEmbedder(nn.Module):
 	def __init__(self,
 		num_harmonics: int,
@@ -28,5 +31,8 @@ class HarmonicEmbedder(nn.Module):
 			return torch.cat((embed.sin(), embed.cos()), dim=-1)
 
 
-def make_position_embedder():
+def make_position_embedder(flag: int) -> nn.Module:
+	if flag == 0:
+		# no position embeddings at all 
+
 	return HarmonicEmbedder()
