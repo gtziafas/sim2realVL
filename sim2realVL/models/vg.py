@@ -17,7 +17,7 @@ from PIL import Image
 class RNNContext(nn.Module):
     def __init__(self, inp_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
-        self.rnn = nn.LSTM(inp_dim, hidden_dim, num_layers, bidirectional=True, batch_first=True)
+        self.rnn = nn.GRU(inp_dim, hidden_dim, num_layers, bidirectional=True, batch_first=True)
 
     def forward(self, x: Tensor) -> Tensor:
         dh = self.rnn.hidden_size
@@ -107,25 +107,24 @@ class MultiLabelRNNVG(MultiLabelVG):
                  visual_encoder: Maybe[nn.Module],
                  text_encoder: RNNContext,
                  fusion_dim: int,
-                 num_fusion_layers: int,
-                 visual_feat_dim: int = 512,
-                 text_feat_dim: int = 300,
-                 with_downsample: bool = True,
+                 hidden_dim: int,
+                 num_rnn_layers: int,
+                 visual_feat_dim: int = 256,
+                 text_feat_dim: int = 300
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
         self.d_t = text_feat_dim
-        self.d_f = fusion_dim
-        self.num_f_layers = num_fusion_layers
         self.tenc = text_encoder
+        self.d_f = fusion_dim
         self.venc = visual_encoder
         self.d_inp = self.d_v + self.d_t + 4
-        self.with_downsample = with_downsample
-        if with_downsample:
-            self.downsample = nn.Linear(self.d_inp, self.d_f)
-            self.d_inp = self.d_f
-        self.rnn = nn.LSTM(self.d_inp, self.d_f, self.num_f_layers, bidirectional=True, batch_first=True)
-        self.cls = nn.Linear(2 * self.d_f, 1)
+        self.num_rnn_layers = num_rnn_layers
+        self.rnn = nn.GRU(self.d_v + self.d_t + 4, self.d_f, self.num_rnn_layers, bidirectional=True, batch_first=True)
+        #self.cls = nn.Linear(2 * self.d_f, 1)
+        self.cls = nn.Sequential(nn.Linear(2 * self.d_f, hidden_dim),
+                                 nn.Tanh(),
+                                 nn.Linear(hidden_dim, 1))
 
         # if skipping visual encoder, run other forward method
         self.forward = self._forward_fast if visual_encoder is None else self._forward
@@ -151,8 +150,6 @@ class MultiLabelRNNVG(MultiLabelVG):
     def fuse(self, vfeats: Tensor, tcontext: Tensor, boxes: Tensor) -> Tensor:
         #boxes[...] = 0.1
         fusion = torch.cat((vfeats, tcontext, boxes), dim=-1) # B x N x (Dv+Dt+4)
-        if self.with_downsample:
-            fusion = self.downsample(fusion).tanh()  # B x N x Df
         fusion, _ = self.rnn(fusion)    # B x N x (2*Df)
         return self.cls(fusion).squeeze()  # B x N
 
@@ -237,20 +234,39 @@ def onestage_vg_model_rnn():
   from torchvision.models import resnet18
   venc = resnet18()
   venc.fc = torch.nn.Identity()
-  return MultiLabelRNNVG(visual_encoder=venc, text_encoder=RNNContext(300, 150, 1), 
-                                fusion_dim=200, num_fusion_layers=1, with_downsample=True)
+  return MultiLabelRNNVG(visual_encoder=venc, text_encoder=RNNContext(300, 150, 1), fusion_dim=200,
+                                hidden_dim=128, num_rnn_layers=1)
 
-def onestage_vg_model(ve: nn.Module = custom_features()):
+def onestage_vg_model_mlp(ve: nn.Module = custom_features()):
   return MultiLabelMLPVG(visual_encoder=ve, text_encoder=RNNContext(300, 150, 1))  
 
 
 def twostage_vg_model_rnn():
-  return MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), 
-                                fusion_dim=200, num_fusion_layers=1, with_downsample=True)
+  return MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), hidden_dim=128, 
+                                fusion_dim=200, num_rnn_layers=1)
 
-def twostage_vg_model():
+def twostage_vg_model_mlp():
   return MultiLabelMLPVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1))
 
+
+def make_model(stage: int, model_id: str):
+    if stage == 1:
+        if model_id == "MLP":
+            return onestage_vg_model_mlp()
+        elif model_id == "RNN":
+            return onestage_vg_model_rnn()
+        else:
+            raise ValueError("Check models.vg for options")
+    elif stage == 2:
+        if model_id == "MLP":
+            return twostage_vg_model_mlp()
+        elif model_id == "RNN":
+            return twostage_vg_model_rnn()
+        else:
+            raise ValueError("Check models.vg for options")
+
+    else:
+        raise ValueError("Stage can be set to either 1 or 2")
 
 
 def make_vg_dataset(ds: RGBDScenesVG, 

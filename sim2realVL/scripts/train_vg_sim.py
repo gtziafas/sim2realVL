@@ -59,6 +59,7 @@ def prepare_dataset(ds: List[AnnotatedScene],
 
 
 def main(num_epochs: int,
+         model_id: str, 
          batch_size: int,
          lr: float,
          wd: float,
@@ -78,7 +79,8 @@ def main(num_epochs: int,
         # optionally test in separate split, given from a path directory as argument
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
-        model = twostage_vg_model().to(device) if not onestage else onestage_vg_model().to(device) 
+        stage = 1 if onestage else 2  
+        model = make_model(stage, model_id).to(device)
         if load_path is not None:
             model.load_pretrained(load_path)
 
@@ -86,7 +88,7 @@ def main(num_epochs: int,
         #optim = SGD(model.parameters(), lr=lr, momentum=.9)
         #criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
         criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
-        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="loss", early_stopping=early_stopping)
+        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="f1_score", early_stopping=early_stopping)
         
         best = trainer.iterate(num_epochs, with_save=save_path, print_log=console)
         return best, trainer.logs 
@@ -127,6 +129,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--device', help='cpu or cuda', type=str, default='cuda')
     parser.add_argument('-bs', '--batch_size', help='batch size to use for training', type=int, default=64)
     parser.add_argument('-e', '--num_epochs', help='how many epochs of training', type=int, default=10)
+    parser.add_argument('-m', '--model_id', help='what type of fusion module to use (MLP, RNN)', type=str, default="MLP")
     parser.add_argument('-s', '--save_path', help='where to save best model', type=str, default=None)
     parser.add_argument('-l', '--load_path', help='where to load model from', type=str, default=None)
     parser.add_argument('-wd', '--wd', help='weight decay to use for regularization', type=float, default=0.)

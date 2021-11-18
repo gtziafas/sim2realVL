@@ -185,6 +185,12 @@ class SimScenesAnnotatedDataset():
         for n in range(self.__len__()):
             self.show(n)
 
+    def filter(self, idces: List[int]):
+        self.queries = [q for i, q in enumerate(self.queries) if i in idces]
+        self.truths = [t for i, t in enumerate(self.truths) if i in idces]
+        self.scenes = [s for i, s in enumerate(self.scenes) if i in idces]
+        self.image_ids = [iid for i, iid in enumerate(self.image_ids) if i in idces]
+
 
 class SimScenesVGOldDataset(SimScenesOldDataset):
     def __init__(self, images_path, csv_path):
@@ -232,7 +238,7 @@ def get_sim_rgbd_scenes_vg_old():
 
 
 def get_sim_rgbd_scenes():
-    return SimScenesDataset("/home/ggtz/dual_arm_ws/DATASET/Images", "/home/ggtz/dual_arm_ws/DATASET/data.tsv")
+    return SimScenesDataset("/home/p300488/dual_arm_ws/DATASET/Images", "/home/p300488/dual_arm_ws/DATASET/data.tsv")
 
 
 def get_sim_rgbd_objects(size: int = -1):
@@ -253,10 +259,34 @@ def get_sim_rgbd_scenes_vg():
     return SimScenesVGOldDataset("datasets/SIM/rgbd-scenes/Images", "datasets/SIM/rgbd-scenes/data_vg.csv")
 
 
-def get_sim_rgbd_scenes_annotated():
-    return SimScenesAnnotatedDataset("/home/ggtz/dual_arm_ws/DATASET/Images", 
-                    "/home/ggtz/dual_arm_ws/DATASET/data.tsv",
-                    "datasets/SIM/rgbd_scenes/data_annotated.csv")
+def get_sim_rgbd_scenes_annotated(split: str = "all"):
+    ds = SimScenesAnnotatedDataset("/home/p300488/dual_arm_ws/DATASET/Images", 
+                        "/home/p300488/dual_arm_ws/DATASET/data.tsv",
+                        "datasets/SIM/rgbd_scenes/data_annotated.csv")
+    if split == "all":
+        return ds
+
+    elif split == "spatial":
+        keywords = ['left', 'right', 'behind', 'front', 'next']
+        idces = []
+        for i, scene in enumerate(ds):
+            tokens = scene.query.split()
+            if len(tokens) > 3 or (len(tokens) == 3 and tokens[1] in keywords):
+                idces.append(i)
+        ds.filter(idces)
+        return ds
+    
+    elif split == "category":
+        cats = set(sum([s.categories for s in ds], []))
+        idces = [i for i, s in enumerate(ds) if s.query in cats]
+        ds.filter(idces)
+        return ds 
+
+    elif split == "color":
+        colors = ['blue', 'green', 'white', 'black', 'red', 'purple', 'brown', 'orange', 'yellow']
+        idces = [i for i, s in enumerate(ds) if s.query.split()[0] in colors]
+        ds.filter(idces)
+        return ds
 
 
 def remove_samples_from_dataset(ds: SimScenesDataset, sample_ids: List[int]):

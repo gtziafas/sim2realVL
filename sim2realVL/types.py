@@ -73,6 +73,10 @@ class Scene:
         return [o.label for o in self.objects]
 
     @property
+    def categories(self):
+        return list(set([o.category for o in self.objects]))
+
+    @property
     def boxes(self):
         return [o.box for o in self.objects]
 
