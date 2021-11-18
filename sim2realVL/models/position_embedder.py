@@ -6,7 +6,22 @@ import torch.nn as nn
 
 
 class MaskOut(nn.Module):
-	def __init__(self)
+	def __init__(self):
+		super().__init__()
+		self.num_features = 4
+
+	def forward(self, x: Tensor) -> Tensor:
+		return torch.zeros_like(x)
+
+
+class Identity(nn.Module):
+	def __init__(self):
+		super().__init__()
+		self.num_features = 4
+
+	def forward(self, x: Tensor) -> Tensor:
+		return x 
+
 
 class HarmonicEmbedder(nn.Module):
 	def __init__(self,
@@ -22,6 +37,7 @@ class HarmonicEmbedder(nn.Module):
 
 		self.register_buffer("_frequencies", omega0 * frequencies, persistent=False)
 		self.include_input = include_input
+		self.num_features = 8 * num_harmonics + 4 if include_input else 8 * num_harmonics
 
 	def forward(self, x: Tensor) -> Tensor:
 		embed = (x[..., None] * self._frequencies).view(*x.shape[:-1], -1)
@@ -31,8 +47,15 @@ class HarmonicEmbedder(nn.Module):
 			return torch.cat((embed.sin(), embed.cos()), dim=-1)
 
 
-def make_position_embedder(flag: int) -> nn.Module:
-	if flag == 0:
-		# no position embeddings at all 
+def make_position_embedder(flag: str) -> nn.Module:
+	if flag == 'no':
+		# mask out position
+		return MaskOut()
 
-	return HarmonicEmbedder()
+	elif flag == 'raw':
+		# keep raw (x1,x2,y1,y2) positions
+		return nn.Identity()
+
+	elif flag == 'harmonic':
+		# apply harmonic transforms to each position feature
+		return HarmonicEmbedder(num_harmonics=6)

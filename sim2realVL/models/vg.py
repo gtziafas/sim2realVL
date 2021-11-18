@@ -3,6 +3,7 @@ from ..utils.word_embedder import WordEmbedder, make_word_embedder
 from ..utils.image_proc import crop_boxes_fixed
 from ..data.rgbd_scenes import RGBDScenesVG
 from ..models.visual_embedder import make_visual_embedder, custom_features
+from ..models.position_embedder import make_position_embedder
 
 import torch
 import torch.nn as nn 
@@ -52,18 +53,22 @@ class MultiLabelMLPVG(MultiLabelVG):
     def __init__(self, 
                  visual_encoder: Maybe[nn.Module],
                  text_encoder: RNNContext,
+                 position_encoder: nn.Module,
                  visual_feat_dim: int = 256,
                  hidden_dim: int = 128,
                  text_feat_dim: int = 300,
+                 position_feat_dim: int = 4,
                  dropout: float = 0.33
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
         self.d_t = text_feat_dim
+        self.d_p = position_feat_dim
         self.tenc = text_encoder
         self.venc = visual_encoder
+        self.penc = position_encoder
         self.dropout = nn.Dropout(dropout)
-        self.cls = nn.Sequential(nn.Linear(self.d_v + self.d_t + 4, hidden_dim),
+        self.cls = nn.Sequential(nn.Linear(self.d_v + self.d_t + self.d_p, hidden_dim),
                                  nn.GELU(),
                                  nn.Linear(hidden_dim, 1))
         #self.cls = nn.Linear(self.d_v + self.d_t + 4, 1)
@@ -80,8 +85,9 @@ class MultiLabelMLPVG(MultiLabelVG):
         vfeats = self.venc(visual.view(batch_size * num_boxes, 3, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
         tcontext = self.tenc(text).unsqueeze(1).repeat(1, num_boxes, 1) # B x N xDt
+        boxes = self.penc(boxes)
 
-        catted = torch.cat((vfeats, boxes, tcontext), dim=-1) # B x N x (Dv+4+Dt)
+        catted = torch.cat((vfeats, boxes, tcontext), dim=-1) # B x N x (Dv+Dp+Dt)
         catted = self.dropout(catted)
         return self.cls(catted).squeeze() # B x N x 1
 
@@ -94,6 +100,7 @@ class MultiLabelMLPVG(MultiLabelVG):
         tcontext = self.tenc(text).unsqueeze(1)
         #print(tcontext.shape)
         tcontext = tcontext.repeat(1, visual.shape[1], 1)
+        boxes = self.penc(boxes)
         #print(tcontext.shape)
         catted = torch.cat((visual, boxes, tcontext), dim=-1)
         catted = self.dropout(catted)
@@ -106,21 +113,24 @@ class MultiLabelRNNVG(MultiLabelVG):
     def __init__(self, 
                  visual_encoder: Maybe[nn.Module],
                  text_encoder: RNNContext,
+                 position_encoder: nn.Module,
                  fusion_dim: int,
                  hidden_dim: int,
                  num_rnn_layers: int,
                  visual_feat_dim: int = 256,
-                 text_feat_dim: int = 300
+                 text_feat_dim: int = 300,
+                 position_feat_dim: int = 4
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
         self.d_t = text_feat_dim
+        self.d_p = position_feat_dim
         self.tenc = text_encoder
         self.d_f = fusion_dim
         self.venc = visual_encoder
-        self.d_inp = self.d_v + self.d_t + 4
+        self.d_inp = self.d_v + self.d_t + self.d_p
         self.num_rnn_layers = num_rnn_layers
-        self.rnn = nn.GRU(self.d_v + self.d_t + 4, self.d_f, self.num_rnn_layers, bidirectional=True, batch_first=True)
+        self.rnn = nn.GRU(self.d_inp, self.d_f, self.num_rnn_layers, bidirectional=True, batch_first=True)
         #self.cls = nn.Linear(2 * self.d_f, 1)
         self.cls = nn.Sequential(nn.Linear(2 * self.d_f, hidden_dim),
                                  nn.Tanh(),
@@ -139,12 +149,15 @@ class MultiLabelRNNVG(MultiLabelVG):
         vfeats = self.venc(visual.view(batch_size * num_boxes, 3, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
         tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)
+        boxes = self.penc(boxes)
+
         return self.fuse(vfeats, tcontext, boxes)
 
     def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:
         vfeats, text, boxes = inputs
         # vfeats: B x N x Dv, text: B x T x Dt
         tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)  # B x N x Dt
+        boxes = self.penc(boxes)
         return self.fuse(vfeats, tcontext, boxes)
 
     def fuse(self, vfeats: Tensor, tcontext: Tensor, boxes: Tensor) -> Tensor:
@@ -230,38 +243,44 @@ def collate(device: str, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], 
     return _collate
 
 
-def onestage_vg_model_rnn():
-  from torchvision.models import resnet18
-  venc = resnet18()
-  venc.fc = torch.nn.Identity()
-  return MultiLabelRNNVG(visual_encoder=venc, text_encoder=RNNContext(300, 150, 1), fusion_dim=200,
-                                hidden_dim=128, num_rnn_layers=1)
+def make_model(stage: int, model_id: str, position_emb: str = "raw"):
+    penc = make_position_embedder(position_emb)
+    position_feat_dim = penc.num_features 
 
-def onestage_vg_model_mlp(ve: nn.Module = custom_features()):
-  return MultiLabelMLPVG(visual_encoder=ve, text_encoder=RNNContext(300, 150, 1))  
-
-
-def twostage_vg_model_rnn():
-  return MultiLabelRNNVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1), hidden_dim=128, 
-                                fusion_dim=200, num_rnn_layers=1)
-
-def twostage_vg_model_mlp():
-  return MultiLabelMLPVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1))
-
-
-def make_model(stage: int, model_id: str):
     if stage == 1:
         if model_id == "MLP":
-            return onestage_vg_model_mlp()
+            ve = custom_features()
+            return MultiLabelMLPVG(visual_encoder=ve, text_encoder=RNNContext(300, 150, 1),
+              position_encoder=penc, position_feat_dim=position_feat_dim)
+
         elif model_id == "RNN":
-            return onestage_vg_model_rnn()
+            ve = custom_features()
+            return MultiLabelRNNVG(visual_encoder=ve, 
+              text_encoder=RNNContext(300, 150, 1), 
+              fusion_dim=200,
+              hidden_dim=128, 
+              num_rnn_layers=1, 
+              position_encoder=penc, 
+              position_feat_dim=4)
+
         else:
             raise ValueError("Check models.vg for options")
+    
+
     elif stage == 2:
         if model_id == "MLP":
-            return twostage_vg_model_mlp()
+          return MultiLabelMLPVG(visual_encoder=None, text_encoder=RNNContext(300, 150, 1),
+              position_encoder=penc, position_feat_dim=position_feat_dim)
+
         elif model_id == "RNN":
-            return twostage_vg_model_rnn()
+          return MultiLabelRNNVG(visual_encoder=None, 
+            text_encoder=RNNContext(300, 150, 1), 
+            hidden_dim=128, 
+            fusion_dim=200, 
+            num_rnn_layers=1, 
+            position_encoder=penc, 
+            position_feat_dim=position_feat_dim)
+
         else:
             raise ValueError("Check models.vg for options")
 

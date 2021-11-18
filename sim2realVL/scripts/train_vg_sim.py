@@ -60,6 +60,7 @@ def prepare_dataset(ds: List[AnnotatedScene],
 
 def main(num_epochs: int,
          model_id: str, 
+         pos_emb: str,
          batch_size: int,
          lr: float,
          wd: float,
@@ -80,7 +81,7 @@ def main(num_epochs: int,
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
         stage = 1 if onestage else 2  
-        model = make_model(stage, model_id).to(device)
+        model = make_model(stage, model_id, pos_emb).to(device)
         if load_path is not None:
             model.load_pretrained(load_path)
 
@@ -129,7 +130,8 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--device', help='cpu or cuda', type=str, default='cuda')
     parser.add_argument('-bs', '--batch_size', help='batch size to use for training', type=int, default=64)
     parser.add_argument('-e', '--num_epochs', help='how many epochs of training', type=int, default=10)
-    parser.add_argument('-m', '--model_id', help='what type of fusion module to use (MLP, RNN)', type=str, default="MLP")
+    parser.add_argument('-f', '--model_id', help='what type of fusion module to use (MLP, RNN)', type=str, default="MLP")
+    parser.add_argument('-pe', '--pos_emb', help='what type of positional embeddings to use (no, raw, harmonic)', type=str, default="raw")
     parser.add_argument('-s', '--save_path', help='where to save best model', type=str, default=None)
     parser.add_argument('-l', '--load_path', help='where to load model from', type=str, default=None)
     parser.add_argument('-wd', '--wd', help='weight decay to use for regularization', type=float, default=0.)
