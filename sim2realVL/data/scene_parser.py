@@ -77,15 +77,15 @@ class SceneGraph(SceneGraph):
 class SceneParser(object):
     # parses an input scene into a graph containing semantic and spatial information about the objects
     # and their relations
-    def __init__(self, resolution: Tuple[int, int] = (480, 640), use_2D_position: bool = True):
+    def __init__(self, resolution: Tuple[int, int] = (480, 640), use_2D_position: bool = False):
         self.img_height, self.img_width = resolution
-        self.Y_threshold = self.img_height / 5
+        self.Y_threshold = self.img_height / 6
         self.use_2D_position = use_2D_position
 
     def __call__(self, scene: Scene) -> SceneGraph:
         colors, tags = zip(*[(SIM_COLOR_MAP[o.label], SIM_SPECIAL_MAP[o.label]) for o in scene.objects])
         # get all information for annotated object in graph's nodes
-        nodes = [AnnotatedObjectSim(o.label, o.category, o.box, o.rectangle, o.center_of_mass,
+        nodes = [AnnotatedObjectSim(o.label, o.category, o.contour, o.box, o.rectangle, o.center_of_mass,
                 o.position_2d, color=colors[i], special=tags[i]) for i, o in enumerate(scene.objects)]
         
         # get spatial relations between objects in graph's edges
@@ -97,9 +97,11 @@ class SceneParser(object):
                                               self.bottom(o.rectangle)) for o in scene.objects])
         for i, o in enumerate(nodes):
             # add main diagonal relation element
-            edges[i, i] = array([-1 if self.left(o.rectangle) == min(lefts) else 1 if self.right(o.rectangle) == max(rights) else 0,
-                                 -1 if self.top(o.rectangle) == min(tops) else 1 if self.bottom(o.rectangle) == max(bottoms) else 0,
-                                 0.])
+            # edges[i, i] = array([-1 if self.left(o.rectangle) == min(lefts) else 1 if self.right(o.rectangle) == max(rights) else 0,
+            #                      -1 if self.top(o.rectangle) == min(tops) else 1 if self.bottom(o.rectangle) == max(bottoms) else 0,
+            #                      0.])
+            edges[i, i] = array([0., 0., 1e5])
+
             # add relations to all others
             for j in range(i+1, len(scene.objects)):
                 edges[i, j, :] = array([self.compare_x(o, nodes[j]), self.compare_y(o, nodes[j]), self.distance_2d(o, nodes[j])])

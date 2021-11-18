@@ -86,7 +86,7 @@ def main(num_epochs: int,
         #optim = SGD(model.parameters(), lr=lr, momentum=.9)
         #criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
         criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
-        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="accuracy", early_stopping=early_stopping)
+        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="loss", early_stopping=early_stopping)
         
         best = trainer.iterate(num_epochs, with_save=save_path, print_log=console)
         return best, trainer.logs 
@@ -107,19 +107,18 @@ def main(num_epochs: int,
 
     else:
         # k-fold cross validation 
-        _kfold = KFold(n_splits=kfold, shuffle=True, random_state=14).split(ds)
-        accu = 0.
+        _kfold = KFold(n_splits=kfold, shuffle=True, random_state=1312).split(ds)
+        metrics = []
         print(f'{kfold}-fold cross validation...')
         for iteration, (train_idces, dev_idces) in enumerate(_kfold):
             train_ds = [s for i, s in enumerate(ds) if i in train_idces]
             dev_ds = [s for i, s in enumerate(ds) if i in dev_idces]
             best, logs = train(train_ds, dev_ds, None)
             print(f'Results {kfold}-fold, iteration {iteration+1}: {best}')
-            accu += best['accuracy']
-        print(f'Average accuracy {kfold}-fold: {accu/kfold}')
-
-    print([i['loss'] for i in logs['train']])
-    print([i['loss'] for i in logs['dev']]) 
+            metrics.append(best)
+        print(metrics)
+    # print([i['loss'] for i in logs['train']])
+    # print([i['loss'] for i in logs['dev']]) 
 
 
 if __name__ == "__main__":

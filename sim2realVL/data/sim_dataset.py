@@ -232,7 +232,7 @@ def get_sim_rgbd_scenes_vg_old():
 
 
 def get_sim_rgbd_scenes():
-    return SimScenesDataset("/home/p300488/dual_arm_ws/DATASET/Images", "~/dual_arm_ws/DATASET/data.tsv")
+    return SimScenesDataset("/home/ggtz/dual_arm_ws/DATASET/Images", "/home/ggtz/dual_arm_ws/DATASET/data.tsv")
 
 
 def get_sim_rgbd_objects(size: int = -1):
@@ -254,8 +254,8 @@ def get_sim_rgbd_scenes_vg():
 
 
 def get_sim_rgbd_scenes_annotated():
-    return SimScenesAnnotatedDataset("/home/p300488/dual_arm_ws/DATASET/Images", 
-                    "~/dual_arm_ws/DATASET/data.tsv",
+    return SimScenesAnnotatedDataset("/home/ggtz/dual_arm_ws/DATASET/Images", 
+                    "/home/ggtz/dual_arm_ws/DATASET/data.tsv",
                     "datasets/SIM/rgbd_scenes/data_annotated.csv")
 
 

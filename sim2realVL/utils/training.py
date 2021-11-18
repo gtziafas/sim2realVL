@@ -1,18 +1,16 @@
 from ..types import *
-from ..utils.metrics import Metrics, vg_metrics
+from ..utils.metrics import *
 
 import torch
 import torch.nn as nn 
 from torch.utils.data import DataLoader
 
 
-def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module,
-                ignore_index: int = -1) -> Metrics:
+def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module) -> Metrics:
     model.train()
     
-    all_preds, all_labels = [], []
     epoch_loss = 0
-    total_correct, total = 0, 0
+    confusion_matrix = torch.zeros(3, 2)
     for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
         preds = model.forward([imgs, words, boxes])
         loss = criterion(preds, truths.float())
@@ -24,33 +22,26 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
 
         # metrics
         epoch_loss += loss.item()
-        num_correct, num_total = vg_metrics(preds.sigmoid().ge(0.5), truths)
-        total_correct += num_correct
-        total += num_total
+        confusion_matrix += get_confusion_matrix(preds.sigmoid().ge(0.5), truths)
 
     epoch_loss /= len(dl)
-    accuracy = total_correct / total
-    return {'loss': round(epoch_loss, 5), 'accuracy': round(accuracy, 4)}
+    return {'loss': -round(epoch_loss, 5), **get_metrics_from_matrix(confusion_matrix)}
 
 
 @torch.no_grad()
-def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module, ignore_index: int = -1) -> Metrics:
+def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module) -> Metrics:
     model.eval()
 
-    all_preds, all_labels = [], []
-    total_correct, total = 0, 0
+    confusion_matrix = torch.zeros(3, 2)
     epoch_loss = 0
     for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
         preds = model.forward([imgs, words, boxes])
         loss = criterion(preds, truths.float())
         epoch_loss += loss.item()
-        num_correct, num_total = vg_metrics(preds.sigmoid().ge(0.5), truths)
-        total_correct += num_correct
-        total += num_total
-    
+        confusion_matrix += get_confusion_matrix(preds.sigmoid().ge(0.5), truths)
+
     epoch_loss /= len(dl)
-    accuracy = total_correct / total
-    return {'loss': round(epoch_loss, 5), 'accuracy': round(accuracy, 4)}
+    return {'loss': -round(epoch_loss, 5), **get_metrics_from_matrix(confusion_matrix)}
 
 
 def train_epoch_classifier(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: nn.Module) -> Metrics:
@@ -73,7 +64,7 @@ def train_epoch_classifier(model: nn.Module, dl: DataLoader, optim: Optimizer, c
     epoch_loss /= len(dl)
     total_correct /= len(dl.dataset) 
     
-    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct, 4)}
+    return {'loss': -round(epoch_loss, 5), 'accuracy': round(total_correct, 4)}
 
 
 def eval_epoch_classifier(model: nn.Module, dl: DataLoader, criterion: nn.Module) -> Metrics:
@@ -88,7 +79,7 @@ def eval_epoch_classifier(model: nn.Module, dl: DataLoader, criterion: nn.Module
         total_correct += (preds.argmax(-1) == y).sum().item()
     epoch_loss /= len(dl)
     total_correct /= len(dl.dataset) 
-    return {'loss': round(epoch_loss, 5), 'accuracy': round(total_correct, 4)}
+    return {'loss': -round(epoch_loss, 5), 'accuracy': round(total_correct, 4)}
 
 
 class Trainer(ABC):
@@ -113,7 +104,7 @@ class Trainer(ABC):
         self.eval_fn = eval_fn
 
     def iterate(self, num_epochs: int, print_log: bool = False, with_save: Maybe[str] = None) -> Metrics:
-        best = {self.target_metric: 0.}
+        best = {self.target_metric: -1e2}
         patience = self.early_stop_patience if self.early_stop_patience is not None else num_epochs
         for epoch in range(num_epochs):
             self.step(print_log)

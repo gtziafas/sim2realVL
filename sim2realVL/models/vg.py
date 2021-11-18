@@ -96,6 +96,7 @@ class MultiLabelMLPVG(MultiLabelVG):
         tcontext = tcontext.repeat(1, visual.shape[1], 1)
         #print(tcontext.shape)
         catted = torch.cat((visual, boxes, tcontext), dim=-1)
+        catted = self.dropout(catted)
         #print(catted.shape)
         return self.cls(catted).squeeze()
 

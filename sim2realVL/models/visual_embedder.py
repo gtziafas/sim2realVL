@@ -111,8 +111,8 @@ def collate(device: str, labelset: Set[str]) -> Map[List[Tuple[array, str]], Tup
 
 def make_visual_embedder(load: str = "./checkpoints/SIM_classifier.p", device = "cpu"):
     ve = VisualEmbedder(feature_extractor=custom_features(),
-                          preprocess=crop_boxes_fixed((75, 75)),
-                          device=device)
+                        preprocess=crop_boxes_fixed((75, 75)),
+                        device=device)
     ve.load_weights(load)
     print('Loaded pre-trained visual embedder...')
     return ve 
