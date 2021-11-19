@@ -18,7 +18,7 @@ def get_metrics_from_matrix(matrix: Tensor) -> Metrics:
     TP, TN, FP, FN, P, N = matrix.flatten().tolist()
     return {"accuracy": round((TP+TN) / (P+N), 4),
             "true_positive_rate": round(TP / P, 4),
-            "precision": round(TP / (TP+FP), 4),
-            "recall":   round(TP / (TP+FN), 4),
-            "f1_score": round(2*TP / (2*TP+FP+FN), 4)
+            "precision": round(TP / (TP+FP+1e-9), 4),
+            "recall":   round(TP / (TP+FN+1e-9), 4),
+            "f1_score": round(2*TP / (2*TP+FP+FN+1e-9), 4)
             }

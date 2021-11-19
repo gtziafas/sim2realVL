@@ -54,8 +54,8 @@ def make_position_embedder(flag: str) -> nn.Module:
 
 	elif flag == 'raw':
 		# keep raw (x1,x2,y1,y2) positions
-		return nn.Identity()
+		return Identity()
 
 	elif flag == 'harmonic':
 		# apply harmonic transforms to each position feature
-		return HarmonicEmbedder(num_harmonics=6)
+		return HarmonicEmbedder(num_harmonics=12)

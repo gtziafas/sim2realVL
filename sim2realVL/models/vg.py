@@ -119,7 +119,8 @@ class MultiLabelRNNVG(MultiLabelVG):
                  num_rnn_layers: int,
                  visual_feat_dim: int = 256,
                  text_feat_dim: int = 300,
-                 position_feat_dim: int = 4
+                 position_feat_dim: int = 4,
+                 dropout: float = 0.33
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
@@ -128,13 +129,16 @@ class MultiLabelRNNVG(MultiLabelVG):
         self.tenc = text_encoder
         self.d_f = fusion_dim
         self.venc = visual_encoder
+        self.penc = position_encoder
+        self.dropout = nn.Dropout(dropout)
         self.d_inp = self.d_v + self.d_t + self.d_p
+        self.downsample = nn.Linear(self.d_inp, self.d_f)
         self.num_rnn_layers = num_rnn_layers
-        self.rnn = nn.GRU(self.d_inp, self.d_f, self.num_rnn_layers, bidirectional=True, batch_first=True)
-        #self.cls = nn.Linear(2 * self.d_f, 1)
-        self.cls = nn.Sequential(nn.Linear(2 * self.d_f, hidden_dim),
-                                 nn.Tanh(),
-                                 nn.Linear(hidden_dim, 1))
+        self.rnn = nn.GRU(self.d_f, self.d_f, self.num_rnn_layers, bidirectional=True, batch_first=True)
+        self.cls = nn.Linear(2 * self.d_f, 1)
+        # self.cls = nn.Sequential(nn.Linear(2 * self.d_f, hidden_dim),
+        #                          nn.Tanh(),
+        #                          nn.Linear(hidden_dim, 1))
 
         # if skipping visual encoder, run other forward method
         self.forward = self._forward_fast if visual_encoder is None else self._forward
@@ -162,19 +166,26 @@ class MultiLabelRNNVG(MultiLabelVG):
 
     def fuse(self, vfeats: Tensor, tcontext: Tensor, boxes: Tensor) -> Tensor:
         #boxes[...] = 0.1
-        fusion = torch.cat((vfeats, tcontext, boxes), dim=-1) # B x N x (Dv+Dt+4)
+        fusion = torch.cat((vfeats, tcontext, boxes), dim=-1) # B x N x (Dv+Dt+Dp)
+        fusion = self.downsample(fusion).tanh()
         fusion, _ = self.rnn(fusion)    # B x N x (2*Df)
+        fusion = self.dropout(fusion)
         return self.cls(fusion).squeeze()  # B x N
 
 
 # M2: Cross-attention between bounding boxes and words
-class MultiLabelMHAVG(nn.Module):
+class MultiLabelAttentionVG(nn.Module):
     def __init__(self, 
                  visual_encoder: Maybe[nn.Module],
+                 position_encoder: nn.Module,
+                 text_encoder: RNNContext,
+                 hidden_dim: int,
                  fusion_dim: int,
-                 num_heads: int,  
-                 visual_feat_dim: int = 512,
+                 num_heads: int = 1,  
+                 visual_feat_dim: int = 256,
                  text_feat_dim: int = 300,
+                 position_feat_dim: int = 4,
+                 dropout: float = 0.33
                  ):
         super().__init__()
         self.d_v = visual_feat_dim
@@ -182,13 +193,20 @@ class MultiLabelMHAVG(nn.Module):
         self.d_f = fusion_dim
         assert self.d_f % num_heads == 0, 'Must use #heads that divide fusion dim'
         self.d_a = self.d_f // num_heads
+        self.d_p = position_feat_dim
         self.num_heads = num_heads
         self.venc = visual_encoder
-        self.tenc = nn.LSTM(self.d_t, self.d_f // 2, 1, bidirectional=True, batch_first=True)
-        self.w_q = nn.Linear(self.d_v + 4, self.d_f)
-        self.w_k = nn.Linear(self.d_t, self.d_f)
-        self.w_v = nn.Linear(self.d_t, self.d_f)
-        self.cls = nn.Linear(self.d_f, 1)
+        self.penc = position_encoder
+        self.tenc = text_encoder
+        self.w_q = nn.Linear(self.d_v + self.d_p + self.d_t, self.d_f)
+        self.w_k = nn.Linear(self.d_v + self.d_p + self.d_t, self.d_f)
+        self.w_v = nn.Linear(self.d_v + self.d_p + self.d_t, self.d_f)
+        self.w_o = nn.Linear(self.d_f, self.d_f)
+        #self.cls = nn.Linear(self.d_f, 1)
+        self.cls = nn.Sequential(nn.Linear(self.d_f, hidden_dim),
+                                 nn.GELU(),
+                                 nn.Linear(hidden_dim, 1))
+        self.dropout = nn.Dropout(dropout)
 
         # if skipping visual encoder, run other forward method
         self.forward = self._forward_fast if visual_encoder is None else self._forward
@@ -198,39 +216,49 @@ class MultiLabelMHAVG(nn.Module):
         batch_size, num_boxes, model_dim, num_heads = q.shape
         dividend = torch.sqrt(torch.tensor(model_dim * num_heads, device=q.device, dtype=floatt))
 
-        weights = contract('bndh,btdh->bnth', q, k) # B x N x T x H 
+        weights = contract('bndh,btdh->bnth', q, k).div(dividend) # B x N x T x H 
         if mask is not None:
             mask = mask.unsqueeze(-1).repeat(1, 1, 1, num_heads)
             weights = weights.masked_fill_(mask == 0, value=-1e-10)
         probs = weights.softmax(dim=-2) # B x N x T x H
+        return contract('bnth,btdh->bndh', probs, v).flatten(-2) # B x N x Df
 
-        return contract('bnlh,btdh->bndh', probs, v).flatten(-2) # B x N x Df
 
     def _forward(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        visual, text, boxes = inputs
-        # visual: B x N x RGB, text: B x T x Dt
-        tfeats, _ = self.tenc(text)
+        visual, text, position = inputs
         batch_size, num_boxes, _, height, width = visual.shape
+
+        # visual: B x N x RGB, text: B x T x Dt
+        tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)  # B x N x Dt
+        
         vfeats = self.venc(visual.view(batch_size * num_boxes, 3, height, width))
         vfeats = vfeats.view(batch_size, num_boxes, -1) # B x N x Dv
-        return self.mha(torch.cat((vfeats, boxes), dim=-1), tfeats)
-
-    def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        vfeats, text, boxes = inputs
-        tfeats, _ = self.tenc(text)
-        # vfeats: B x N x Dv, text: B x T x Dt
-        return self.mha(torch.cat((vfeats, boxes), dim=-1), tfeats)
-
-    def mha(self, vfeats: Tensor, tfeats: Tensor) -> Tensor:
-        batch_size, num_words = tfeats.shape[0:2]
-        num_boxes = vfeats.shape[1]
-
-        v_proj = self.w_q(vfeats).view(batch_size, num_boxes, -1, self.num_heads)
-        t_keys = self.w_k(tfeats).view(batch_size, num_words, -1, self.num_heads)
-        t_vals = self.w_v(tfeats).view(batch_size, num_words, -1, self.num_heads)
-        attended = self.attention(v_proj, t_keys, t_vals)
+        
+        position = self.penc(position)
+        
+        catted = torch.cat((vfeats, position, tcontext), dim=-1) 
+        attended = self.mha(catted, catted, catted)
+        attended = self.dropout(attended)
         return self.cls(attended).squeeze()
 
+    def _forward_fast(self, inputs: Tuple[Tensor, ...]) -> Tensor:
+        vfeats, text, position = inputs
+        position = self.penc(position)
+        tcontext = self.tenc(text).unsqueeze(1).repeat(1, vfeats.shape[1], 1)  # B x N x Dt
+        # vfeats: B x N x Dv, text: B x T x Dt
+        catted = torch.cat((vfeats, position, tcontext), dim=-1) 
+        attended = self.mha(catted, catted, catted)
+        attended = self.dropout(attended)
+        return self.cls(attended).squeeze()
+
+    def mha(self, queries: Tensor, keys: Tensor, values: Tensor) -> Tensor:
+        batch_size, num_objects = queries.shape[0:2]
+
+        q_proj = self.w_q(queries).view(batch_size, num_objects, -1, self.num_heads)
+        k_proj = self.w_k(keys).view(batch_size, num_objects, -1, self.num_heads)
+        v_proj = self.w_v(values).view(batch_size, num_objects, -1, self.num_heads)
+        scores =  self.attention(q_proj, k_proj, v_proj)
+        return self.w_o(scores)
 
 def collate(device: str, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], Tuple[Tensor, Tensor, Tensor, MayTensor]]:
     def _collate(batch: List[Tuple[Tensor, ...]]) -> Tuple[Tensor, Tensor, Tensor, MayTensor]:
@@ -261,8 +289,17 @@ def make_model(stage: int, model_id: str, position_emb: str = "raw"):
               hidden_dim=128, 
               num_rnn_layers=1, 
               position_encoder=penc, 
-              position_feat_dim=4)
+              position_feat_dim=position_feat_dim)
 
+        elif model_id == "Attention":
+            ve = custom_features()
+            return MultiLabelAttentionVG(visual_encoder=ve,
+                text_encoder=RNNContext(300, 150, 1),
+                position_encoder=penc,
+                position_feat_dim=position_feat_dim,
+                fusion_dim=512,
+                hidden_dim=128
+                )
         else:
             raise ValueError("Check models.vg for options")
     
@@ -280,6 +317,15 @@ def make_model(stage: int, model_id: str, position_emb: str = "raw"):
             num_rnn_layers=1, 
             position_encoder=penc, 
             position_feat_dim=position_feat_dim)
+
+        elif model_id == "Attention":
+            return MultiLabelAttentionVG(visual_encoder=None,
+                text_encoder=RNNContext(300, 150, 1),
+                position_encoder=penc,
+                position_feat_dim=position_feat_dim,
+                fusion_dim=512,
+                hidden_dim=128
+                )
 
         else:
             raise ValueError("Check models.vg for options")
