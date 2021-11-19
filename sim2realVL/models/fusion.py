@@ -2,7 +2,7 @@ from ..types import *
 
 import torch
 import torch.nn as nn 
-
+import torch.nn.functional as F
 
 
 class ConcatFusion(nn.Module):
@@ -28,15 +28,18 @@ class Conv1x1Fusion(nn.Module):
 
 
 class GRUFusion(nn.Module):
-    def __init__(self, input_dim: int, fusion_dim: int, num_layers: int = 1):
+    def __init__(self, input_dim: int, fusion_dim: int, hidden_fim: int, num_layers: int = 1):
         super().__init__()
         self.d_inp = input_dim
         self.df = fusion_dim
-        self.rnn = nn.GRU(self.d_inp, self.df, num_layers, bidirectional=False, batch_first=True)
+        self.fc = nn.Linear(self.d_inp, self.df)
+        self.rnn = nn.GRU(self.d_inp, hidden_fim, num_layers, bidirectional=False, batch_first=True)
         self.concat = ConcatFusion(fusion_dim)
 
     def forward(self, inps: Tuple[Tensor, ...]) -> Tensor:
         assert len(set([t.shape[0:-1] for t in inps])) == 1
         catted = self.concat(inps)
+        out = self.fc(out)
+        out = F.gelu(out)
         out, _ = self.rnn(catted)
         return out
