@@ -1,23 +1,73 @@
-# from https://github.com/facebookresearch/pytorch3d/blob/main/projects/nerf/nerf/harmonic_embedding.py
 from ..types import * 
 
 import torch
 import torch.nn as nn 
 
 
+class PositionEmbedder(nn.Module):
+	''' Converts a (x,y,w,h) bounding box from
+		cv2-like coordinates 
+			top-left 		<-> (0,0)
+			bottom-right	<-> (W,H)
+		into normalized range
+			top-left		<-> (-1,1)
+			bottom-right	<-> (1,1)
+		while also returning intermediate features
+			[x, y, x+w/2, y+h/2, x+w, y+h, w, h]
+	'''
+	def __init__(self, 
+		embedder: nn.Module,
+		img_height: int = 480,
+		img_width: int = 640
+	):
+		super().__init__()
+		self.W, self.H = img_width, img_height
+		self.emb = embedder
+		self.num_features = self.emb.num_features
+
+	def x_t(self, x: Tensor) -> Tensor:
+		return x * 2 / self.W - 1
+
+	def y_t(self, y: Tensor) -> Tensor:
+		return y * 2 / self.H - 1
+
+	def forward(self, x: Tensor) -> Tensor:
+		box = torch.empty(*x.shape[0:2], 8)
+		box[...,0] = self.x_t(x[...,0])
+		box[...,1] = self.y_t(x[...,1])
+		box[...,2] = self.x_t(x[...,0] + x[...,2] / 2)
+		box[...,3] = self.y_t(x[...,1] + x[...,3] / 2)
+		box[...,4] = self.x_t(x[...,0] + x[...,2])
+		box[...,5] = self.y_t(x[...,1] + x[...,3])
+		box[...,6] = x[...,2] / self.W 
+		box[...,7] = x[...,3] / self.H
+		# box = torch.cat((
+		# 		x[...,0] * 2 / self.W - 1,
+		# 		x[...,1] * 2 / self.H - 1,
+		# 		(x[...,0] + x[...,2] / 2) * 2 / self.W - 1,
+		# 		(x[...,1] + x[...,3] / 2) * 2 / self.H - 1,
+		# 		(x[...,0] + x[...,2]) * 2 / self.W - 1,
+		# 		(x[...,1] + x[...,3]) * 2 / self.H - 1,
+		# 		x[...,2] / self.W,
+		# 		x[...,3] / self.H)
+		# ).reshape(batch_size, 8)
+
+		return self.emb(box)
+
+
 class MaskOut(nn.Module):
 	def __init__(self):
 		super().__init__()
-		self.num_features = 4
+		self.num_features = 1
 
 	def forward(self, x: Tensor) -> Tensor:
-		return torch.zeros_like(x)
+		return torch.tensor(0)
 
 
 class Identity(nn.Module):
 	def __init__(self):
 		super().__init__()
-		self.num_features = 4
+		self.num_features = 8
 
 	def forward(self, x: Tensor) -> Tensor:
 		return x 
@@ -50,12 +100,15 @@ class HarmonicEmbedder(nn.Module):
 def make_position_embedder(flag: str) -> nn.Module:
 	if flag == 'no':
 		# mask out position
-		return MaskOut()
+		return PositionEmbedder(embedder=MaskOut())
 
 	elif flag == 'raw':
-		# keep raw (x1,x2,y1,y2) positions
-		return Identity()
+		# keep raw positions
+		return PositionEmbedder(embedder=Identity())
 
 	elif flag == 'harmonic':
 		# apply harmonic transforms to each position feature
-		return HarmonicEmbedder(num_harmonics=12)
+		return PositionEmbedder(embedder=HarmonicEmbedder(num_harmonics=16, include_input=False))
+
+	else:
+		raise ValueError("Check models.position_embedder for valid options")

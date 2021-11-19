@@ -46,7 +46,7 @@ def prepare_dataset(ds: List[AnnotatedScene],
         
         truth = torch.zeros(len(scene.objects), dtype=longt)
         truth[scene.truth] = 1
-        position = torch.stack([torch.tensor([b.x/W, b.y/H, (b.x+b.w)/W, (b.y+b.h)/H]).float() for b in scene.boxes])
+        position = torch.stack([torch.tensor([b.x, b.y, b.w, b.h], dtype=longt) for b in scene.boxes])
         
         query = torch.tensor(we([scene.query])[0], dtype=floatt)
         

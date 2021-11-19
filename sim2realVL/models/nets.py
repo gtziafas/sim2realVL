@@ -29,8 +29,9 @@ class MLP(nn.Module):
 
 
 class GRUContext(nn.Module):
-  def __init__(self, inp_dim: int, hidden_dim: int, num_layers: int, bidirectional: bool = True):
+  def __init__(self, inp_dim: int, hidden_dim: int, num_layers: int, bidirectional: bool = False):
       super().__init__()
+      self.bidirectional = bidirectional
       self.gru = nn.GRU(inp_dim, hidden_dim, num_layers, bidirectional=bidirectional, batch_first=True)
 
   def forward(self, x: Tensor) -> Tensor:
