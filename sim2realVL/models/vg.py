@@ -179,9 +179,15 @@ def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
 
     elif model_id == "RNN":
         te = GRUContext(300, 300, 1)
-        fusion_dim = 256 + 300 + position_feats_dim
-        fusion = GRUFusion(input_dim=256, fusion_dim=256)
-        head = nn.Linear(256, 1)
+        fusion_dim = 256
+        fusion = GRUFusion(input_dim=256 + 300 + position_feats_dim, 
+                fusion_dim=fusion_dim, 
+                hidden_dim=fusion_dim)
+
+        head = nn.Linear(fusion_dim, 1)
+        # head = nn.Sequential(nn.Linear(fusion_dim, 128),
+        #                      nn.GELU(),
+        #                      nn.Linear(128, 1))
 
     elif model_id == "CNN":
         te = GRUContext(300, 256, 1)

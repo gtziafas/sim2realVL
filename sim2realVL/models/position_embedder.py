@@ -32,7 +32,7 @@ class PositionEmbedder(nn.Module):
 		return y * 2 / self.H - 1
 
 	def forward(self, x: Tensor) -> Tensor:
-		box = torch.empty(*x.shape[0:2], 8)
+		box = torch.empty(*x.shape[0:2], 8).to(x.device)
 		box[...,0] = self.x_t(x[...,0])
 		box[...,1] = self.y_t(x[...,1])
 		box[...,2] = self.x_t(x[...,0] + x[...,2] / 2)

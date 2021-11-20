@@ -81,7 +81,7 @@ def main(num_epochs: int,
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
         stage = 1 if onestage else 2  
-        model = make_model(stage, model_id, pos_emb).to(device)
+        model = make_model(model_id, pos_emb, stage).to(device)
         if load_path is not None:
             model.load_pretrained(load_path)
 
