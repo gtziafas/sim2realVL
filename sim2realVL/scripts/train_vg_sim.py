@@ -1,11 +1,9 @@
 from ..types import *
-from ..utils.image_proc import crop_box, crop_contour
-from ..data.sim_dataset import get_sim_rgbd_scenes_annotated
 from ..utils.training import Trainer
-from ..utils.word_embedder import make_word_embedder
 from ..utils.loss import BCEWithLogitsIgnore
-from ..models.visual_embedder import make_visual_embedder
 from ..models.vg import *
+
+from .prepare_sim_dataset import get_tensorized_dataset
 
 import torch
 import torch.nn as nn 
@@ -14,7 +12,6 @@ from torch.utils.data import random_split, DataLoader
 from torch.optim import AdamW, Adam, SGD
 from sklearn.model_selection import KFold
 from math import ceil
-from tqdm import tqdm
 
 # reproducability
 SEED = torch.manual_seed(1312)
@@ -22,40 +19,6 @@ if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.cuda.manual_seed_all(1312)
-
-
-def prepare_dataset(ds: List[AnnotatedScene], 
-                    image_loader: Callable[[int], array],
-                    pretrained_features: bool, 
-                    save: Maybe[str] = None
-                    ):
-    H, W = 480, 640
-    we = make_word_embedder()
-    ve = make_visual_embedder()
-
-    dataset = []
-    covered_ids = {}
-    for i, scene in enumerate(tqdm(ds)):
-        # dont do rendundant cropping
-        if scene.image_id not in covered_ids:
-            crops = [crop_contour(image_loader(scene.image_id), o.contour) for o in scene.objects]
-            feats = ve.features(crops) if pretrained_features else torch.stack(ve.tensorize(crops))
-            covered_ids[scene.image_id] = feats
-        else:
-            feats = covered_ids[scene.image_id]
-        
-        truth = torch.zeros(len(scene.objects), dtype=longt)
-        truth[scene.truth] = 1
-        position = torch.stack([torch.tensor([b.x, b.y, b.w, b.h], dtype=longt) for b in scene.boxes])
-        
-        query = torch.tensor(we([scene.query])[0], dtype=floatt)
-        
-        dataset.append((feats, query, truth, position))
-
-    if save is not None:
-        torch.save(dataset, save)
-
-    return dataset
 
 
 def main(num_epochs: int,
@@ -96,8 +59,7 @@ def main(num_epochs: int,
 
     # get data
     print('Loading...')
-    ds = get_sim_rgbd_scenes_annotated()
-    ds = prepare_dataset(prepare_dataset(ds, ds.get_image_from_id, not onestage)) if not checkpoint else torch.load(checkpoint)
+    ds = get_tensorized_dataset(~onestage, "no", False) if not checkpoint else torch.load(checkpoint)
     
     if not kfold:
         # random split

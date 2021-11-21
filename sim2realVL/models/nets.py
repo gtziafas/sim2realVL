@@ -80,3 +80,34 @@ class CNNClassifier(nn.Module):
         # x: B x 3 x H x W
         x = self.features(x).flatten(1) # B x D
         return self.head(x)
+
+
+class AttentionLayer(nn.Module):
+  def __init__(self, 
+               hidden_dim: int,
+               similarity: nn.Module = nn.Softmax(dim=-1)
+              ):
+    super().__init__()
+    self.attn_vector = nn.Parameter(torch.rand(hidden_dim))
+    self.similarity = similarity
+
+  def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    prod = x @ self.attn_vector
+    scores = self.similarity(prod)
+    out = scores.unsqueeze(-1) * x
+    context = out.mean(dim=1)
+    return out, context
+
+
+class GRUAttentionContext(nn.Module):
+  def __init__(self, inp_dim: int, hidden_dim: int, num_layers: int, bidirectional: bool = False):
+    super().__init__()
+    self.bidirectional = bidirectional
+    self.gru = nn.GRU(inp_dim, hidden_dim, num_layers, bidirectional=bidirectional, batch_first=True)
+    self.attn = AttentionLayer(hidden_dim=hidden_dim if not bidirectional else 2 * hidden_dim)
+
+  def forward(self, x: Tensor) -> Tensor:
+    dh = self.gru.hidden_size
+    H, _ = self.gru(x)  # B x T x (2*)D
+    H, context = self.attn(H)
+    return context

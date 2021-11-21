@@ -61,7 +61,7 @@ class MaskOut(nn.Module):
 		self.num_features = 1
 
 	def forward(self, x: Tensor) -> Tensor:
-		return torch.tensor(0)
+		return torch.zeros((*x.shape[0:-1], 1), device=x.device)
 
 
 class Identity(nn.Module):
@@ -87,7 +87,7 @@ class HarmonicEmbedder(nn.Module):
 
 		self.register_buffer("_frequencies", omega0 * frequencies, persistent=False)
 		self.include_input = include_input
-		self.num_features = 8 * num_harmonics + 4 if include_input else 8 * num_harmonics
+		self.num_features = 8 * 2*num_harmonics + 8 if include_input else 8 * 2*num_harmonics
 
 	def forward(self, x: Tensor) -> Tensor:
 		embed = (x[..., None] * self._frequencies).view(*x.shape[:-1], -1)
