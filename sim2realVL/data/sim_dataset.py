@@ -262,31 +262,53 @@ def get_sim_rgbd_scenes_vg():
 def get_sim_rgbd_scenes_annotated(split: str = "all"):
     ds = SimScenesAnnotatedDataset("/home/p300488/dual_arm_ws/DATASET/Images", 
                         "/home/p300488/dual_arm_ws/DATASET/data.tsv",
-                        "datasets/SIM/rgbd_scenes/data_annotated.csv")
+                        "datasets/SIM/rgbd_scenes/data_annotated_2.csv")
     if split == "all":
         return ds
 
-    elif split == "spatial":
-        keywords = ['left', 'right', 'behind', 'front', 'next']
-        idces = []
-        for i, scene in enumerate(ds):
-            tokens = scene.query.split()
-            if len(tokens) > 3 or (len(tokens) == 3 and tokens[1] in keywords):
-                idces.append(i)
-        ds.filter(idces)
+    elif split == "spatial_rel":
+        ds.filter(spatial_rel_annotation_indices(ds))
         return ds
-    
+
+    elif split == "spatial_abs":
+        ds.filter(spatial_abs_annotation_indices(ds))
+        return ds 
+
     elif split == "category":
-        cats = set(sum([s.categories for s in ds], []))
-        idces = [i for i, s in enumerate(ds) if s.query in cats]
-        ds.filter(idces)
+        ds.filter(category_annotation_indices(ds))
         return ds 
 
     elif split == "color":
-        colors = ['blue', 'green', 'white', 'black', 'red', 'purple', 'brown', 'orange', 'yellow']
-        idces = [i for i, s in enumerate(ds) if s.query.split()[0] in colors]
-        ds.filter(idces)
+        ds.filter(color_annotation_indices(ds))
         return ds
+
+
+def spatial_rel_annotation_indices(ds: SimScenesAnnotatedDataset):
+    keywords = ['left', 'right', 'behind', 'front', 'next']
+    idces = []
+    for i, scene in enumerate(ds):
+        tokens = scene.query.split()
+        if len(tokens) > 3 or (len(tokens) == 3 and tokens[1] in keywords):
+            idces.append(i)
+    return idces 
+
+
+def spatial_abs_annotation_indices(ds: SimScenesAnnotatedDataset):
+    keywords = ['left', 'right', 'behind', 'closest', 'furthest']
+    idces = [i for i, s in enumerate(ds) if s.query.split()[0] in keywords]
+    return idces 
+
+
+def category_annotation_indices(ds: SimScenesAnnotatedDataset):
+    cats = set(sum([s.categories for s in ds], []))
+    idces = [i for i, s in enumerate(ds) if s.query in cats]
+    return idces 
+
+
+def color_annotation_indices(ds: SimScenesAnnotatedDataset):
+    colors = ['blue', 'green', 'white', 'black', 'red', 'purple', 'brown', 'orange', 'yellow']
+    idces = [i for i, s in enumerate(ds) if s.query.split()[0] in colors]
+    return idces
 
 
 def remove_samples_from_dataset(ds: SimScenesDataset, sample_ids: List[int]):
