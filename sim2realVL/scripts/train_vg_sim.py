@@ -52,7 +52,7 @@ def main(num_epochs: int,
         #optim = SGD(model.parameters(), lr=lr, momentum=.9)
         #criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
         criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
-        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="f1_score", early_stopping=early_stopping)
+        trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="true_positive_rate", early_stopping=early_stopping)
         
         best = trainer.iterate(num_epochs, with_save=save_path, print_log=console)
         return best, trainer.logs 
@@ -81,7 +81,14 @@ def main(num_epochs: int,
             best, logs = train(train_ds, dev_ds, None)
             print(f'Results {kfold}-fold, iteration {iteration+1}: {best}')
             metrics.append(best)
-        print(metrics)
+        
+        avgs = {}
+        for met in metrics:
+            for k, v in met.items():
+                avgs[k] = v if k not in avgs.keys() else avgs[k] + v
+        print(f'Averaged results {kfold}-fold:')
+        for k, v in avgs.items():
+            print(f'\t{k}: {round(v / kfold, 4)}')
     # print([i['loss'] for i in logs['train']])
     # print([i['loss'] for i in logs['dev']]) 
 

@@ -1,4 +1,5 @@
 from ..types import * 
+from .nets import * 
 
 import torch
 import torch.nn as nn 
@@ -18,12 +19,18 @@ class PositionEmbedder(nn.Module):
 	def __init__(self, 
 		embedder: nn.Module,
 		img_height: int = 480,
-		img_width: int = 640
+		img_width: int = 640,
+		with_attention: Maybe[str] = None
 	):
 		super().__init__()
 		self.W, self.H = img_width, img_height
 		self.emb = embedder
 		self.num_features = self.emb.num_features
+
+		if with_attention is None:
+			self.pos_attn = nn.Identity()
+		elif with_attention == "bilinear":
+			self.pos_attn = BilinearAttentionLayer(8)
 
 	def x_t(self, x: Tensor) -> Tensor:
 		return x * 2 / self.W - 1
@@ -32,16 +39,16 @@ class PositionEmbedder(nn.Module):
 		return y * 2 / self.H - 1
 
 	def forward(self, x: Tensor) -> Tensor:
-		box = torch.empty(*x.shape[0:2], 8).to(x.device)
-		box[...,0] = self.x_t(x[...,0])
-		box[...,1] = self.y_t(x[...,1])
-		box[...,2] = self.x_t(x[...,0] + x[...,2] / 2)
-		box[...,3] = self.y_t(x[...,1] + x[...,3] / 2)
-		box[...,4] = self.x_t(x[...,0] + x[...,2])
-		box[...,5] = self.y_t(x[...,1] + x[...,3])
-		box[...,6] = x[...,2] / self.W 
-		box[...,7] = x[...,3] / self.H
-		# box = torch.cat((
+		position = torch.empty(*x.shape[0:2], 8).to(x.device)
+		position[...,0] = self.x_t(x[...,0])
+		position[...,1] = self.y_t(x[...,1])
+		position[...,2] = self.x_t(x[...,0] + x[...,2] / 2)
+		position[...,3] = self.y_t(x[...,1] + x[...,3] / 2)
+		position[...,4] = self.x_t(x[...,0] + x[...,2])
+		position[...,5] = self.y_t(x[...,1] + x[...,3])
+		position[...,6] = x[...,2] / self.W 
+		position[...,7] = x[...,3] / self.H
+		# position = torch.cat((
 		# 		x[...,0] * 2 / self.W - 1,
 		# 		x[...,1] * 2 / self.H - 1,
 		# 		(x[...,0] + x[...,2] / 2) * 2 / self.W - 1,
@@ -51,8 +58,10 @@ class PositionEmbedder(nn.Module):
 		# 		x[...,2] / self.W,
 		# 		x[...,3] / self.H)
 		# ).reshape(batch_size, 8)
+		position = self.emb(position)
+		position = self.pos_attn(position)
 
-		return self.emb(box)
+		return position
 
 
 class MaskOut(nn.Module):
@@ -97,18 +106,19 @@ class HarmonicEmbedder(nn.Module):
 			return torch.cat((embed.sin(), embed.cos()), dim=-1)
 
 
-def make_position_embedder(flag: str) -> nn.Module:
+def make_position_embedder(flag: str, with_attention: Maybe[str] = None) -> nn.Module:
 	if flag == 'no':
 		# mask out position
-		return PositionEmbedder(embedder=MaskOut())
+		return PositionEmbedder(embedder=MaskOut(), with_attention=with_attention)
 
 	elif flag == 'raw':
 		# keep raw positions
-		return PositionEmbedder(embedder=Identity())
+		return PositionEmbedder(embedder=Identity(), with_attention=with_attention)
 
 	elif flag == 'harmonic':
 		# apply harmonic transforms to each position feature
-		return PositionEmbedder(embedder=HarmonicEmbedder(num_harmonics=16, include_input=False))
+		return PositionEmbedder(embedder=HarmonicEmbedder(num_harmonics=16, include_input=False),
+								with_attention=with_attention)
 
 	else:
 		raise ValueError("Check models.position_embedder for valid options")

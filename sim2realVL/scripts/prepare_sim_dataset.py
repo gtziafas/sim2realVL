@@ -5,9 +5,77 @@ from ..models.visual_embedder import make_visual_embedder
 from ..utils.image_proc import crop_box, crop_contour
 
 import torch
-from random import shuffle
+from random import shuffle, sample
+from collections import Counter
 from tqdm import tqdm
 
+
+
+def count_annots_per_query(ds: List[AnnotatedScene], num_truths: int) -> List[int]:
+    if num_truths == 1:
+        q_ids, qs, ls = zip(*[(i, s.query, s.labels[s.truth]) for i, s in enumerate(ds) if isinstance(s.truth, int)])
+    else:
+        q_ids, qs, ls = zip(*[(i, s.query,  array(s.labels)[s.truth].tolist()) for i, s in enumerate(ds) if isinstance(s.truth, int)])
+
+    _CQ, _CL = Counter(qs), Counter(ls)
+    print(_CQ)
+    print()
+    print(_CL)
+    return q_ids
+
+
+def filter_samples_per_label(ds: List[AnnotatedScene],
+    num_truths: int,
+    size_per_label: int) -> Dict[str, List[int]]:
+    if num_truths == 1:
+        q_ids, qs, ls = zip(*[(i, s.query, [s.labels[s.truth]]) for i, s in enumerate(ds) if isinstance(s.truth, int)])
+    else:
+        q_ids, qs, ls = zip(*[(i, s.query, array(s.labels)[s.truth].tolist()) for i, s in enumerate(ds) if isinstance(s.truth, list) and len(s.truth) == num_truths])
+
+    res = {}
+    #print(set(sum(ls, [])))
+    for label in set(sum(ls, [])):
+        ids = [i for i, l in zip(q_ids, ls) if label in l]
+        _size = min(size_per_label, len(ids))
+        filtered_ids = sample(ids, _size)
+        filtered_qs = [q for i, q in zip(q_ids, qs) if i in filtered_ids]
+        filtered_ls = [l for i, l in zip(q_ids, ls) if i in filtered_ids]
+        
+        _CQ, _CL = Counter(filtered_qs), Counter(sum(filtered_ls, []))
+        print(_CQ)
+        print()
+        print(_CL)
+        print('==' * 48)
+
+        res[label] = filtered_ids
+    return res
+
+
+def filter_samples_per_query(ds: List[AnnotatedScene],
+    num_truths: int,
+    size_per_query: int) -> Dict[str, List[int]]:
+    if num_truths == 1:
+        q_ids, qs, ls = zip(*[(i, s.query, [s.labels[s.truth]]) for i, s in enumerate(ds) if isinstance(s.truth, int)])
+    else:
+        q_ids, qs, ls = zip(*[(i, s.query,  array(s.labels)[s.truth].tolist()) for i, s in enumerate(ds) if isinstance(s.truth, list) and len(s.truth) == num_truths])
+
+    res = {}
+    #print(set(ls))
+    for query in set(qs):
+        ids = [i for i, q in zip(q_ids, qs) if q == query]
+        _size = min(size_per_query, len(ids))
+        filtered_ids = sample(ids, _size)
+        filtered_qs = [q for i, q in zip(q_ids, qs) if i in filtered_ids]
+        filtered_ls = [l for i, l in zip(q_ids, ls) if i in filtered_ids]
+        
+        _CQ, _CL = Counter(filtered_qs), Counter(sum(filtered_ls, []))
+        print(_CQ)
+        print()
+        print(_CL)
+        print('==' * 48)
+
+        res[query] = filtered_ids
+    return res
 
 
 def prepare_dataset(ds: List[AnnotatedScene], 

@@ -111,3 +111,20 @@ class GRUAttentionContext(nn.Module):
     H, _ = self.gru(x)  # B x T x (2*)D
     H, context = self.attn(H)
     return context
+
+
+class BilinearAttentionLayer(nn.Module):
+  def __init__(self, 
+               hidden_dim: int,
+               similarity: nn.Module = nn.Softmax(dim=-1)
+              ):
+    super().__init__()
+    self.attn_matrix = nn.Parameter(torch.rand(hidden_dim, hidden_dim))
+    self.similarity = similarity
+
+  def forward(self, x: Tensor) -> Tensor:
+    scalar = torch.sqrt(torch.tensor(x.shape[-1], device=x.device))
+    prod = x @ self.attn_matrix @ x.transpose(-1, -2) / scalar
+    scores = self.similarity(prod)
+    out = scores @ x 
+    return out

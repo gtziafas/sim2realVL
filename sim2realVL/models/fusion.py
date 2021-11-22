@@ -1,4 +1,5 @@
 from ..types import *
+from .nets import *
 
 import torch
 import torch.nn as nn 
@@ -15,6 +16,37 @@ class ConcatFusion(nn.Module):
         return torch.cat(inps, dim=-1)
 
 
+class CrossModalAttentionFusion(nn.Module):
+    def __init__(self, 
+                 fusion_dim: int, 
+                 text_feat_dim: int,
+                 visual_feat_dim: int, 
+                 position_feat_dim: int):
+        super().__init__()
+        self.df = fusion_dim 
+        self.text_projection = nn.Linear(text_feat_dim, fusion_dim)
+        self.objects_projection = nn.Linear(visual_feat_dim, fusion_dim)
+
+    def forward(self,inps: Tuple[Tensor, ...]) -> Tensor:
+        assert len(set([t.shape[0:-1] for t in inps])) == 1
+        # B x N x Dv, B x N x Dp, B x N(repeats) x Dt 
+        visual, position, text = inps  
+
+        query = self.text_projection(text) # B x N x Df
+
+        #objects = torch.cat((visual, position), dim=-1) 
+        objects = visual
+        objects = self.objects_projection(objects) # B x N x Df
+
+        scalar = torch.tensor(self.df, device=query.device).sqrt()
+        scores = query @ objects.transpose(-1, -2) # B x N x N
+        scores = F.softmax(scores, dim=-1)
+        out = scores @ objects / objects.shape[1] # B x N x Df
+
+        #out = F.gelu(objects)
+        return out 
+
+
 class Conv1x1Fusion(nn.Module):
     def __init__(self, fusion_dim: int, num_channels: int = 3):
         super().__init__()
@@ -28,11 +60,17 @@ class Conv1x1Fusion(nn.Module):
 
 
 class GRUFusion(nn.Module):
-    def __init__(self, input_dim: int, fusion_dim: int, hidden_dim: int, num_layers: int = 1):
+    def __init__(self, 
+                input_dim: int, 
+                fusion_dim: int, 
+                hidden_dim: int, 
+                bidirectional: bool = False,
+                num_layers: int = 1):
         super().__init__()
         self.df = fusion_dim
         self.fc = nn.Linear(input_dim, self.df)
-        self.rnn = nn.GRU(self.df, hidden_dim, num_layers, bidirectional=False, batch_first=True)
+        self.dh = hidden_dim if not bidirectional else hidden_dim // 2
+        self.rnn = nn.GRU(self.df, self.dh, num_layers, bidirectional=bidirectional, batch_first=True)
         self.concat = ConcatFusion(fusion_dim)
 
     def forward(self, inps: Tuple[Tensor, ...]) -> Tensor:
@@ -61,5 +99,4 @@ class GRUSpatialFusion(nn.Module):
 
     def forward(self, inps: Tuple[Tensor, ...]) -> Tensor:
         visual, position, phrase = inps
-        xs = position[..., 0]
-
+        pass

@@ -18,7 +18,7 @@ class MultiLabelVG(nn.Module):
                  position_embedder: nn.Module,
                  fusion: nn.Module,
                  classifier: nn.Module,
-                 dropout: float = .0):
+                 dropout: float):
         super().__init__()
         self.vis_emb = visual_embedder
         self.text_emb = text_embedder
@@ -76,7 +76,7 @@ def collate(device: str, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], 
 
 
 def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
-    pe = make_position_embedder(position_emb)
+    pe = make_position_embedder(position_emb, with_attention=None)
     position_feats_dim = pe.num_features 
     
     ve = custom_features() if stage == 1 else None 
@@ -84,27 +84,53 @@ def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
     if model_id == "MLP":
         te = GRUContext(300, 300, 1)   
         fusion_dim =  256 + 300 + position_feats_dim
-        fusion = ConcatFusion(fusion_dim=fusion_dim)
-        head = nn.Sequential(nn.Linear(fusion_dim, 128),
+        # fusion = nn.Sequential(ConcatFusion(fusion_dim),
+        #                        nn.Linear(fusion_dim, 512),
+        #                        nn.GELU(),
+        #                      )
+        # head = nn.Linear(512, 1)
+        # dropout = 0.33
+        fusion = ConcatFusion(fusion_dim)
+        head = nn.Sequential(nn.Linear(fusion_dim, 512),
                              nn.GELU(),
-                             nn.Linear(128, 1))
+                             nn.Dropout(0.33),
+                             nn.Linear(512, 1))
+        dropout = 0.
+
+    elif model_id == "Attention":
+        te = GRUContext(300, 300, 1)   
+        fusion_dim = 512 
+        fusion = CrossModalAttentionFusion(fusion_dim=fusion_dim,
+                text_feat_dim=300,
+                visual_feat_dim=256,
+                position_feat_dim=position_feats_dim)
+        #head = nn.Linear(512, 1)
+        head = nn.Sequential(nn.Linear(fusion_dim, 512),
+                             nn.GELU(),
+                             nn.Dropout(0.33),
+                             nn.Linear(512, 1))
+        dropout = 0.0
 
     elif model_id == "RNN":
         te = GRUContext(300, 300, 1)
-        fusion_dim = 256
+        fusion_dim = 512
         fusion = GRUFusion(input_dim=256 + 300 + position_feats_dim, 
                 fusion_dim=fusion_dim, 
-                hidden_dim=fusion_dim)
+                hidden_dim=fusion_dim,
+                bidirectional=True)
 
         head = nn.Linear(fusion_dim, 1)
-        # head = nn.Sequential(nn.Linear(fusion_dim, 128),
+        dropout = 0.33
+        # head = nn.Sequential(nn.Linear(fusion_dim, 256),
         #                      nn.GELU(),
-        #                      nn.Linear(128, 1))
+        #                      nn.Dropout(0.5),
+        #                      nn.Linear(256, 1))
 
     elif model_id == "CNN":
         te = GRUContext(300, 300, 1)
         fusion = Conv1x1Fusion(fusion_dim=256)
         head = nn.Linear(256, 1)
+        dropout =0.
 
     else:
         raise ValueError("Check models.vg for options")
@@ -113,5 +139,6 @@ def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
                         text_embedder=te,
                         position_embedder=pe,
                         fusion=fusion,
-                        classifier=head
+                        classifier=head,
+                        dropout=dropout
                         )
