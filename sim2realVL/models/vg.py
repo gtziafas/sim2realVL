@@ -105,7 +105,7 @@ def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
                 visual_feat_dim=256,
                 position_feat_dim=position_feats_dim)
         #head = nn.Linear(512, 1)
-        head = nn.Sequential(nn.Linear(fusion_dim, 512),
+        head = nn.Sequential(nn.Linear( 256 + 300 + position_feats_dim, 512),
                              nn.GELU(),
                              nn.Dropout(0.33),
                              nn.Linear(512, 1))
@@ -119,12 +119,12 @@ def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
                 hidden_dim=fusion_dim,
                 bidirectional=True)
 
-        head = nn.Linear(fusion_dim, 1)
+        #head = nn.Linear(fusion_dim, 1)
         dropout = 0.33
-        # head = nn.Sequential(nn.Linear(fusion_dim, 256),
-        #                      nn.GELU(),
-        #                      nn.Dropout(0.5),
-        #                      nn.Linear(256, 1))
+        head = nn.Sequential(nn.Linear(fusion_dim, 256),
+                             nn.GELU(),
+                             nn.Dropout(0.5),
+                             nn.Linear(256, 1))
 
     elif model_id == "CNN":
         te = GRUContext(300, 300, 1)

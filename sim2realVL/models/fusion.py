@@ -21,30 +21,34 @@ class CrossModalAttentionFusion(nn.Module):
                  fusion_dim: int, 
                  text_feat_dim: int,
                  visual_feat_dim: int, 
-                 position_feat_dim: int):
+                 position_feat_dim: int,
+                 activation_fn: nn.Module = nn.GELU):
         super().__init__()
         self.df = fusion_dim 
         self.text_projection = nn.Linear(text_feat_dim, fusion_dim)
-        self.objects_projection = nn.Linear(visual_feat_dim, fusion_dim)
+        self.objects_projection = nn.Linear(visual_feat_dim + position_feat_dim, fusion_dim)
+        self.activation_fn = activation_fn()
+        self.attn_map = nn.Linear(fusion_dim, 1)
 
     def forward(self,inps: Tuple[Tensor, ...]) -> Tensor:
         assert len(set([t.shape[0:-1] for t in inps])) == 1
         # B x N x Dv, B x N x Dp, B x N(repeats) x Dt 
         visual, position, text = inps  
 
-        query = self.text_projection(text) # B x N x Df
+        query = self.text_projection(text[:,0,:]) # B x Df
+        query = self.activation_fn(query)
 
-        #objects = torch.cat((visual, position), dim=-1) 
-        objects = visual
-        objects = self.objects_projection(objects) # B x N x Df
+        objects = torch.cat((visual, position), dim=-1) # B x N x (Dv + Dp)
+        objects_proj = self.objects_projection(objects) # B x N x Df
+        objects_proj = self.activation_fn(objects_proj)
 
-        scalar = torch.tensor(self.df, device=query.device).sqrt()
-        scores = query @ objects.transpose(-1, -2) # B x N x N
-        scores = F.softmax(scores, dim=-1)
-        out = scores @ objects / objects.shape[1] # B x N x Df
+        query_tile = query.unsqueeze(1).repeat(1, visual.shape[1], 1) # B x N x Df
+        scores = objects_proj * query_tile  # B x N x Df
 
-        #out = F.gelu(objects)
-        return out 
+        attn_map = F.softmax(self.attn_map(scores), dim=1) # B x N x 1
+        scores = attn_map * torch.cat((visual, text, position), dim=-1) # B x N x (Dv + Dp + Dt)
+
+        return scores 
 
 
 class Conv1x1Fusion(nn.Module):
