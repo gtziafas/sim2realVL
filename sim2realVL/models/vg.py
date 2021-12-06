@@ -81,7 +81,18 @@ def make_model(model_id: str, position_emb: str = "raw", stage: int = 2):
     
     ve = custom_features() if stage == 1 else None 
 
-    if model_id == "MLP":
+    if model_id == "Test":
+        te = GRUContext(300, 300, 1)
+        fusion_dim = 512
+        fusion = RelativeExtensionFusion(fusion_dim=fusion_dim,
+                text_feat_dim=300,
+                visual_feat_dim=256,
+                position_feat_dim=position_feats_dim,
+                dropout=0.33)
+        head = nn.Identity()
+        dropout = 0.
+
+    elif model_id == "MLP":
         te = GRUContext(300, 300, 1)   
         fusion_dim =  256 + 300 + position_feats_dim
         # fusion = nn.Sequential(ConcatFusion(fusion_dim),
