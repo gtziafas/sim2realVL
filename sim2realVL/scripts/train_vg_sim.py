@@ -1,6 +1,6 @@
 from ..types import *
 from ..utils.training import Trainer
-from ..utils.loss import BCEWithLogitsIgnore
+from ..utils.loss import *
 from ..models.vg import *
 from ..models.cmn import CMN
 
@@ -59,8 +59,8 @@ def main(num_epochs: int,
 
         optim = Adam(model.parameters(), lr=lr, weight_decay=wd)
         #optim = SGD(model.parameters(), lr=lr, momentum=.9)
-        #criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
-        criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
+        # criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
+        criterion = TripletHingeLoss()
         trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="true_positive_rate", early_stopping=early_stopping)
         
         best = trainer.iterate(num_epochs, with_save=save_path, print_log=console)

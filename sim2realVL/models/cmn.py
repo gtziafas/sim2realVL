@@ -21,6 +21,45 @@ class NormalizeScale(nn.Module):
       return bottom_normalized_scaled
 
 
+class MatchingLess(nn.Module):
+    def __init__(self, 
+                 object_dim: int, 
+                 text_dim: int, 
+                 jemb_dim: int, 
+                 jemb_dropout: float=0.,
+                 with_bn: bool = False
+                ):
+        super().__init__()
+        self.bn = nn.Identity() if not with_bn else nn.BatchNorm1d(jemb_dim)
+        self.object_fc = nn.Linear(object_dim, text_dim)
+        self.jemb_fc = nn.Linear(text_dim, 1)
+        self.dropout = nn.Dropout(jemb_dropout)
+
+    def forward(self, object_input: Tensor, text_input: Tensor) -> Tensor:
+        # objects: B x N x Do, text: B x Dt
+        B, N = object_input.shape[0:2]
+
+        object_feat = object_input.view(B * N, -1)
+
+        object_emb = self.object_fc(object_feat)
+        #text_emb = self.text_fc(text_input)
+
+        # l2-normalize
+        # object_emb_norm = F.normalize(object_emb, p=2, dim=1)
+        # text_emb_norm = F.normalize(text_emb, p=2, dim=1)
+
+        # repeat text to match object emb tile
+        object_emb_tile = object_emb.view(B, N, -1)
+        text_emb_tile = text_input.unsqueeze(1).repeat(1, N, 1)
+        jemb = F.normalize(object_emb_tile * text_emb_tile, p=2, dim=-1)
+        jemb = self.dropout(jemb)
+
+        scores = self.jemb_fc(jemb)
+
+        return scores.squeeze()
+        
+
+
 class Matching(nn.Module):
     def __init__(self, 
                  object_dim: int, 
@@ -171,13 +210,13 @@ class WordTagger(nn.Module):
   def encode_per_tag(self, queries: Tensor, pad_mask: Tensor) -> Tensor:
       # queries: B x T x Dt, pad_mask: B x T
       # tagset: {0: '<loc>', 1: '<obj>', 2: '<rel>', 3: '<subj>'}
-      tags, _ = self.forward(queries)
+      tags, q_context = self.forward(queries)
       embs = []
       for tag_id in range(self.tag_vocab_size):
         is_tag = torch.logical_and(tags.argmax(-1) == tag_id, ~pad_mask)
         tag_mask = torch.where(is_tag.unsqueeze(2), queries, torch.zeros_like(queries))
         embs.append(tag_mask.mean(1))
-      return embs
+      return embs, q_context
 
 
 class CMN(nn.Module):
@@ -185,15 +224,15 @@ class CMN(nn.Module):
     super().__init__()
     self.padding_value = cfg['padding_value']
 
-    self.visual_norm = NormalizeScale(cfg['visual_embed_size'])
-    self.visual_fc = nn.Linear(cfg['visual_embed_size'], cfg['jemb_size'])
+    # self.visual_norm = NormalizeScale(cfg['visual_embed_size'])
+    # self.visual_fc = nn.Linear(cfg['visual_embed_size'], cfg['jemb_size'])
 
     self.position_embedder = make_position_embedder()
-    self.position_norm = NormalizeScale(cfg['position_embed_size'])
-    self.position_fc = nn.Linear(cfg['position_embed_size'], cfg['jemb_size'])
+    # self.position_norm = NormalizeScale(cfg['position_embed_size'])
+    # self.position_fc = nn.Linear(cfg['position_embed_size'], cfg['jemb_size'])
     
-    self.word_norm = NormalizeScale(cfg['word_embed_size'])
-    self.word_fc = nn.Linear(cfg['word_embed_size'], cfg['jemb_size'])
+    # self.word_norm = NormalizeScale(cfg['word_embed_size'])
+    # self.word_fc = nn.Linear(cfg['word_embed_size'], cfg['jemb_size'])
 
     self.word_tagger = WordTagger(len(cfg['tagset']),
                                   cfg['word_embed_size'],
@@ -208,15 +247,18 @@ class CMN(nn.Module):
                                   cfg['word_vocab_size']
                                   )
 
-    self.ground_mod = Matching(cfg['jemb_size'],
-                               cfg['jemb_size'],
+    num_rnn_dirs = 1 if not cfg['word_rnn_bidirectional'] else 2
+    self.weight_fc = nn.Linear(num_rnn_dirs * cfg['word_hidden_size'], 3)
+
+    self.ground_mod = Matching(cfg['visual_embed_size'],
+                               cfg['word_embed_size'],
                                cfg['jemb_size'],
                                cfg['jemb_dropout'],
                                cfg['with_batch_norm']
                               )
 
-    self.spatial_mod = Matching(2 * cfg['jemb_size'],
-                                cfg['jemb_size'],
+    self.spatial_mod = Matching(2 * cfg['position_embed_size'],
+                                cfg['word_embed_size'],
                                 cfg['jemb_size'],
                                 cfg['jemb_dropout'],
                                 cfg['with_batch_norm']
@@ -233,22 +275,29 @@ class CMN(nn.Module):
     batch_size, num_objects = visual.shape[0:2]
 
     # normalize and project visual embs 
-    visual = self.visual_fc(self.visual_norm(visual))
+    # visual = self.visual_fc(self.visual_norm(visual))
 
     # average word embeddigns according to predicted tag
     pad_mask = (queries == self.padding_value).sum(-1) == queries.shape[-1]
-    qs = self.word_tagger.encode_per_tag(queries, pad_mask) # (4x) B x Dt
-    q_loc, q_obj, q_rel, q_subj = self.word_fc(self.word_norm(torch.stack(qs, dim=0)))
+    qs, q_context = self.word_tagger.encode_per_tag(queries, pad_mask) # (4x) B x Dt
+    # q_loc, q_obj, q_rel, q_subj = self.word_fc(self.word_norm(torch.stack(qs, dim=0)))
+    q_loc, q_obj, q_rel, q_subj = qs 
+
+    # decide weight per module assignment 
+    # weights = F.softmax(self.weight_fc(q_context), dim=-1).unsqueeze(1).unsqueeze(1) # B x N x N x 3
 
     # unitary score subject
     subj_scores = self.ground_mod(visual, q_subj) # B x N 
     
     # update pair-wise scores by repeating subject row-wise
     S_subj = subj_scores.unsqueeze(2).repeat(1, 1, num_objects)
+
+    #return subj_scores    
     
+
     # N x N pair-wise position embeddings, flattened
     position = self.position_embedder(position)
-    position = self.position_fc(self.position_norm(position))
+    # position = self.position_fc(self.position_norm(position))
     p_tile = position.unsqueeze(2).repeat(1, 1, num_objects, 1)
     p_pair = torch.cat([p_tile, p_tile.transpose(1,2)], dim=-1)  
     p_pair = p_pair.view(batch_size, num_objects**2, -1) # B x N^2 x 2*Dp
@@ -268,6 +317,7 @@ class CMN(nn.Module):
     S_rel = rel_obj_scores.unsqueeze(1).repeat(1, num_objects, 1) + rel_scores
 
     S_pair = S_subj + S_rel + S_loc   # B x N x N
+    # S_pair = (weights * torch.stack([S_subj, S_rel, S_loc], 3)).sum(3) # (B x N x N)
 
     # return strong/weak supervision output
     return S_pair if self.strong else S_pair.max(-1)[0] 
