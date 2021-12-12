@@ -2,6 +2,7 @@ from ..types import *
 from ..utils.training import Trainer
 from ..utils.loss import BCEWithLogitsIgnore
 from ..models.vg import *
+from ..models.cmn import CMN
 
 from .prepare_sim_dataset import get_tensorized_dataset
 
@@ -12,6 +13,7 @@ from torch.utils.data import random_split, DataLoader
 from torch.optim import AdamW, Adam, SGD
 from sklearn.model_selection import KFold
 from math import ceil
+import yaml
 
 # reproducability
 SEED = torch.manual_seed(1312)
@@ -44,7 +46,14 @@ def main(num_epochs: int,
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
         stage = 1 if onestage else 2  
-        model = make_model(model_id, pos_emb, stage).to(device)
+        if model_id != "CMN":
+            model = make_model(model_id, pos_emb, stage).to(device)
+        else:
+            config_path =  './sim2realVL/configs/cmn.yaml'
+            with open(config_path, 'r') as stream:
+                cfg = yaml.safe_load(stream)
+            model = CMN(cfg).to(device)
+
         if load_path is not None:
             model.load_pretrained(load_path)
 
@@ -97,7 +106,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--device', help='cpu or cuda', type=str, default='cuda')
-    parser.add_argument('-bs', '--batch_size', help='batch size to use for training', type=int, default=64)
+    parser.add_argument('-bs', '--batch_size', help='batch size to use for training', type=int, default=50)
     parser.add_argument('-e', '--num_epochs', help='how many epochs of training', type=int, default=10)
     parser.add_argument('-f', '--model_id', help='what type of fusion module to use (MLP, RNN)', type=str, default="MLP")
     parser.add_argument('-pe', '--pos_emb', help='what type of positional embeddings to use (no, raw, harmonic)', type=str, default="raw")
@@ -109,7 +118,7 @@ if __name__ == "__main__":
     parser.add_argument('-lr', '--lr', help='learning rate to use in optimizer', type=float, default=1e-03)
     parser.add_argument('--console', action='store_true', help='print training logs', default=False)
     parser.add_argument('--onestage', action='store_true', help='whether to train one-stage model varianet', default=False)
-    parser.add_argument('-chp', '--checkpoint', help='load pre-trained visual features from file', default=None)
+    parser.add_argument('-chp', '--checkpoint', help='load dataset from binary file', default=None)
     parser.add_argument('-kfold', '--kfold', help='whether to do k-fold x-validation (default no)', type=int, default=None)
     
     kwargs = vars(parser.parse_args())

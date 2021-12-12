@@ -11,7 +11,7 @@ class PositionEmbedder(nn.Module):
 			top-left 		<-> (0,0)
 			bottom-right	<-> (W,H)
 		into normalized range
-			top-left		<-> (-1,1)
+			top-left		<-> (0,0)
 			bottom-right	<-> (1,1)
 		while also returning intermediate features
 			[x, y, x+w/2, y+h/2, x+w, y+h, w, h]
@@ -33,10 +33,12 @@ class PositionEmbedder(nn.Module):
 			self.pos_attn = BilinearAttentionLayer(8)
 
 	def x_t(self, x: Tensor) -> Tensor:
-		return x * 2 / self.W - 1
+		#return x * 2 / self.W - 1
+		return x / self.W 
 
 	def y_t(self, y: Tensor) -> Tensor:
-		return y * 2 / self.H - 1
+		# return y * 2 / self.H - 1
+		return y / self.H 
 
 	def forward(self, x: Tensor) -> Tensor:
 		position = torch.empty(*x.shape[0:2], 8).to(x.device)
@@ -106,7 +108,7 @@ class HarmonicEmbedder(nn.Module):
 			return torch.cat((embed.sin(), embed.cos()), dim=-1)
 
 
-def make_position_embedder(flag: str, with_attention: Maybe[str] = None) -> nn.Module:
+def make_position_embedder(flag: str = "raw", with_attention: Maybe[str] = None) -> nn.Module:
 	if flag == 'no':
 		# mask out position
 		return PositionEmbedder(embedder=MaskOut(), with_attention=with_attention)

@@ -1,0 +1,19 @@
+padding_value: -1 
+tagset: ['<loc>', '<obj>', '<rel>', '<subj>']
+word_embed_size: 300 
+word_hidden_size: 150 
+word_num_rnn_layers: 1 
+word_rnn_bidirectional: True 
+word_input_dropout: 0. 
+word_rnn_dropout: 0.
+word_fc_dropout: 0.
+word_rnn_type: 'gru'
+word_embed_pretrain: True 
+word_vocab_size: -1
+visual_embed_size: 256
+jemb_size: 300
+jemb_dropout: 0.
+with_batch_norm: False 
+position_embed_size: 8
+word_tagger_pretrain: './checkpoints/cmn/SIM_word_tagger.p'
+strong_supervision: False

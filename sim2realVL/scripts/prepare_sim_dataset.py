@@ -1,5 +1,5 @@
 from ..types import *
-from ..data.sim_dataset import get_sim_rgbd_scenes_annotated
+from ..data.sim_dataset import *
 from ..utils.word_embedder import make_word_embedder
 from ..models.visual_embedder import make_visual_embedder
 from ..utils.image_proc import crop_box, crop_contour
@@ -171,3 +171,42 @@ def get_tensorized_dataset(pretrained_features: bool, order: str, save_splits: b
         torch.save([s for i, s in enumerate(tensorized) if i in idces], save)
 
     return tensorized
+
+
+def annotate_word_tags(ds: List[AnnotatedScene]):
+    colors = ['blue', 'green', 'white', 'black', 'red', 'purple', 'brown', 'orange', 'yellow']
+    all_subj_words = set(sum([s.categories for s in ds], [])) 
+    all_subj_words = sum([c.split() for c in all_subj_words], []) + colors
+
+    def transform(split: str) -> Map[str, List[str]]:
+        if split == "category" or split == "color":
+            return lambda q: ['<subj>'] * len(q.split()) 
+
+        elif split == "spatial_abs":
+            return lambda q: ['<loc>'] + ['<subj>'] * (len(q.split()) - 1)
+
+        elif split == "spatial_rel":
+            def _transform_spt_rel(q: str) -> List[str]:
+                tokens = q.split()
+                is_rel = [0 if t in all_subj_words else 1 for t in tokens]
+                rel_starts, rel_ends = is_rel.index(1), (len(is_rel) - is_rel[::-1].index(1))
+                return ['<subj>'] * rel_starts + ['<rel>'] * (rel_ends - rel_starts) + ['<obj>'] * (len(is_rel) - rel_ends) 
+            return _transform_spt_rel
+
+        else:
+            raise ValueError(f"unknown split {split}")
+            
+    queries = ds.queries
+    annots = [None] * len(queries)
+    for split in ["category", "color", "spatial_abs", "spatial_rel"]:
+        tmp_indices = get_split_indices(ds, split)
+        for index in tmp_indices:
+            annots[index] = split
+    assert None not in annots
+
+    return [transform(annot)(query) for query, annot in zip(queries, annots)]
+
+
+def get_dataset_word_tags():
+    ds = get_sim_rgbd_scenes_annotated()
+    return annotate_word_tags(ds)
