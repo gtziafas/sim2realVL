@@ -119,7 +119,7 @@ def main():
     tags, tagset = annotate_word_tags(ds)
 
     train_dl, dev_dl = get_dataloaders_pretrain(queries, tags, 128, "cuda", tagset=tagset,
-        save_checkpoint="./checkpoints/cmn/SIM_dataset_queries_and_tags.p")
+        load_checkpoint="./checkpoints/cmn/SIM_dataset_queries_and_tags.p")
 
     model = WordTagger(len(tagset), 300, 150, 1, pretrain=True).cuda()
     crit = torch.nn.CrossEntropyLoss(reduction="mean", ignore_index=-1)

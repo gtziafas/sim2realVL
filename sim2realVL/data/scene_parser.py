@@ -1,3 +1,4 @@
+
 from ..types import *
 from ..utils.viz import render_graph
 
@@ -59,7 +60,7 @@ class SceneGraph(SceneGraph):
         rows = [''.join([self.nodes[i].label + ' ' * (maxchars - len(self.nodes[i].label))] + [x + ' ' * (maxchars - len(x)) for x in rows[i]]) for i in range(len(rows))]
         print('\n'.join([header, *rows]))
 
-    def render(self, path):
+    def render(self, path: str):
         with open('input.dot', 'w+') as f:
             items = ['item{} [ label="{}"];'.format(i+1, self.nodes[i].label) for i in range(len(self.nodes))]
             self_loops = ['item{} -> item{} [ label="{}"];'.format(i+1, i+1, self.nodes[i].color) for i in range(len(self.nodes))]
@@ -72,6 +73,39 @@ class SceneGraph(SceneGraph):
             f.write('\n')
             f.write('}')
         render_graph('input.dot', path)
+
+    def get_mask(self, query: str):
+        if query == "left":
+            x_mask = self.edges[:,:,0]
+            return x_mask == -1
+
+        elif query == "right":
+            x_mask = self.edges[:,:,0]
+            return x_mask == 1
+
+        elif query == "behind":
+            y_mask = self.edges[:,:,1]
+            return y_mask == -1
+
+        elif query == "front":
+            y_mask = self.edges[:,:,1]
+            return y_mask == 1 
+
+        elif query == "closest":
+            ys = np.array([o.position_2d[1] for o in self.nodes])
+            ys = np.tile(ys, [ys.shape[0], 1])
+            ys_pair = ys - ys.T
+            return ys_pair > 0 
+
+        elif query == "furthest":
+            ys = np.array([o.position_2d[1] for o in self.nodes])
+            ys = np.tile(ys, [ys.shape[0], 1])
+            ys_pair = ys - ys.T
+            return ys_pair < 0
+
+        elif query == "next":
+            d_mask = self.edges[:,:,2]
+            return d_mask <= 100
 
 
 class SceneParser(object):

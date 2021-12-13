@@ -23,6 +23,9 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
         # metrics
         epoch_loss += loss.item()
         confusion_matrix += get_confusion_matrix(preds.sigmoid().ge(0.5), truths)
+        # mask = torch.where(preds == preds.max(1)[0].unsqueeze(1), 1, 0)
+        # mask = torch.where((preds - 0.5) > 0, 1, 0)
+        # confusion_matrix += get_confusion_matrix(mask, truths)
 
     epoch_loss /= len(dl)
     return {'loss': -round(epoch_loss, 5), **get_metrics_from_matrix(confusion_matrix)}
@@ -39,6 +42,9 @@ def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module) -> Metric
         loss = criterion(preds, truths.float())
         epoch_loss += loss.item()
         confusion_matrix += get_confusion_matrix(preds.sigmoid().ge(0.5), truths)
+        # mask = torch.where(preds == preds.max(1)[0].unsqueeze(1), 1, 0)
+        # mask = torch.where((preds - 0.5) > 0, 1, 0)
+        # confusion_matrix += get_confusion_matrix(mask, truths)
 
     epoch_loss /= len(dl)
     return {'loss': -round(epoch_loss, 5), **get_metrics_from_matrix(confusion_matrix)}

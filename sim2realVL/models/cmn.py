@@ -137,6 +137,38 @@ class RelationModule(nn.Module):
         scores = self.match(pos_embs, q_spt)
         return scores.view(batch_size, num_objects, num_objects)
 
+
+class SpatialRelations(nn.Module):
+  def __init__(self, 
+               pos_dim: int,
+               text_dim: int, 
+               jemb_dim: int,
+               jemb_dropout: float = 0.
+               ):
+        super().__init__()
+        self.jemb_dim = jemb_dim
+        self.pos_fc = nn.Linear(2 * pos_dim, jemb_dim)
+        self.text_fc = nn.Linear(text_dim, jemb_dim)
+        self.dropout = nn.Dropout(p=jemb_dropout)
+        self.match = nn.Linear(jemb_dim, 1)
+
+  def forward(self, pos_embs: Tensor, q_spt: Tensor) -> Tensor:
+    # pos_embs: B x N x 2*Dp, q_st: B x Dt
+    batch_size, num_objects = pos_embs.shape[0:2]
+    pos_embs = self.pos_fc(pos_embs)
+    pos_embs = F.leaky_relu(pos_embs).view(-1, self.jemb_dim) # B*N x Dj
+
+    q_spt = self.text_fc(q_spt)
+    q_spt = F.leaky_relu(q_spt)
+    # B*N x Dj
+    q_spt_tile = q_spt.unsqueeze(1).repeat(1, num_objects, 1).view(-1, self.jemb_dim)
+
+    jembs = F.normalize(pos_embs * q_spt_tile, p=2, dim=1)
+    jembs = self.dropout(jembs)
+
+    return self.match(jembs).squeeze() #  (B*N,)
+
+
         
 class RNNEncoder(nn.Module):
   def __init__(self, 
@@ -247,10 +279,10 @@ class CMN(nn.Module):
                                   cfg['word_vocab_size']
                                   )
 
-    num_rnn_dirs = 1 if not cfg['word_rnn_bidirectional'] else 2
+    num_rnn_dirs = 1 if not cfg['word_rnn_bidirectional'] else 2 
     self.weight_fc = nn.Linear(num_rnn_dirs * cfg['word_hidden_size'], 3)
 
-    self.ground_mod = Matching(cfg['visual_embed_size'],
+    self.ground_mod = Matching(cfg['visual_embed_size'] +  cfg['position_embed_size'],
                                cfg['word_embed_size'],
                                cfg['jemb_size'],
                                cfg['jemb_dropout'],
@@ -266,12 +298,15 @@ class CMN(nn.Module):
 
     if cfg['word_tagger_pretrain'] is not None:
       self.word_tagger.load_state_dict(torch.load(cfg['word_tagger_pretrain']))
+      for param in self.word_tagger.parameters():
+          param.requires_grad = False
 
     self.strong = cfg['strong_supervision']
 
   def forward(self, inputs: Tuple[Tensor, ...]) -> Tensor:
     # visual: B x N x Dv, position: B x N x Dp, query: B x T x Dt
     visual, queries, position = inputs
+    position = self.position_embedder(position)
     batch_size, num_objects = visual.shape[0:2]
 
     # normalize and project visual embs 
@@ -287,7 +322,8 @@ class CMN(nn.Module):
     # weights = F.softmax(self.weight_fc(q_context), dim=-1).unsqueeze(1).unsqueeze(1) # B x N x N x 3
 
     # unitary score subject
-    subj_scores = self.ground_mod(visual, q_subj) # B x N 
+    objects = torch.cat([visual, position], dim=-1)
+    subj_scores = self.ground_mod(objects, q_subj) # B x N 
     
     # update pair-wise scores by repeating subject row-wise
     S_subj = subj_scores.unsqueeze(2).repeat(1, 1, num_objects)
@@ -296,7 +332,6 @@ class CMN(nn.Module):
     
 
     # N x N pair-wise position embeddings, flattened
-    position = self.position_embedder(position)
     # position = self.position_fc(self.position_norm(position))
     p_tile = position.unsqueeze(2).repeat(1, 1, num_objects, 1)
     p_pair = torch.cat([p_tile, p_tile.transpose(1,2)], dim=-1)  
@@ -311,7 +346,7 @@ class CMN(nn.Module):
 
     # unitary object + pair-wise relation score (relative spatial) if given
     rel_scores = self.spatial_mod(p_pair, q_rel).view(-1, num_objects, num_objects)
-    rel_obj_scores = self.ground_mod(visual, q_rel) 
+    rel_obj_scores = self.ground_mod(objects, q_rel) 
 
     # update pair-wise scores by repeating object column-wise and adding spatial scores
     S_rel = rel_obj_scores.unsqueeze(1).repeat(1, num_objects, 1) + rel_scores
