@@ -11,8 +11,9 @@ def train_epoch(model: nn.Module, dl: DataLoader, optim: Optimizer, criterion: n
     
     epoch_loss = 0
     confusion_matrix = torch.zeros(3, 2)
-    for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
-        preds = model.forward([imgs, words, boxes])
+    for batch_idx, batch in enumerate(dl):
+        inputs, truths = batch[:-1], batch[-1]
+        preds = model.forward(*inputs)
         loss = criterion(preds, truths.float())
 
         # backprop
@@ -37,8 +38,9 @@ def eval_epoch(model: nn.Module, dl: DataLoader, criterion: nn.Module) -> Metric
 
     confusion_matrix = torch.zeros(3, 2)
     epoch_loss = 0
-    for batch_idx, (imgs, words, truths, boxes) in enumerate(dl):
-        preds = model.forward([imgs, words, boxes])
+    for batch_idx, batch in enumerate(dl):
+        inputs, truths = batch[:-1], batch[-1]
+        preds = model.forward(*inputs)
         loss = criterion(preds, truths.float())
         epoch_loss += loss.item()
         confusion_matrix += get_confusion_matrix(preds.sigmoid().ge(0.5), truths)

@@ -2,7 +2,7 @@ from ..types import *
 from ..utils.training import Trainer
 from ..utils.loss import *
 from ..models.vg import *
-from ..models.cmn import CMN
+from ..models.cmn import CMNEndToEnd, Matching
 
 from .prepare_sim_dataset import get_tensorized_dataset
 
@@ -31,6 +31,7 @@ def main(num_epochs: int,
          wd: float,
          device: str,
          console: bool,
+         config_path:str, 
          save_path: Maybe[str],
          load_path: Maybe[str],
          checkpoint: Maybe[str],
@@ -38,6 +39,7 @@ def main(num_epochs: int,
          onestage: bool,
          kfold: Maybe[int]
          ):
+
     def train(train_ds: List[AnnotatedScene], dev_ds: List[AnnotatedScene], test_ds: Maybe[List[AnnotatedScene]] = None):
         train_dl = DataLoader(train_ds, shuffle=True, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
         dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
@@ -45,22 +47,31 @@ def main(num_epochs: int,
         # optionally test in separate split, given from a path directory as argument
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
 
-        stage = 1 if onestage else 2  
-        if model_id != "CMN":
+        with open(config_path, 'r') as stream:
+            cfg = yaml.safe_load(stream)
+        
+
+        if model_id == "Match":
+            model =  Matching(cfg['visual_embed_size'],
+                              cfg['word_embed_size'],
+                              cfg['jemb_size'],
+                              cfg['jemb_dropout']
+                            ).to(device)
+        
+        elif model_id != "CMN":
+            stage = 1 if onestage else 2
             model = make_model(model_id, pos_emb, stage).to(device)
+        
         else:
-            config_path =  './sim2realVL/configs/cmn.yaml'
-            with open(config_path, 'r') as stream:
-                cfg = yaml.safe_load(stream)
-            model = CMN(cfg).to(device)
+            model = CMNEndToEnd(cfg).to(device)
 
         if load_path is not None:
             model.load_pretrained(load_path)
 
         optim = Adam(model.parameters(), lr=lr, weight_decay=wd)
-        #optim = SGD(model.parameters(), lr=lr, momentum=.9)
-        # criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
-        criterion = TripletHingeLoss()
+        criterion = BCEWithLogitsIgnore(reduction='mean', ignore_index=-1)
+        # criterion = TripletHingeLoss()
+        
         trainer = Trainer(model, (train_dl, dev_dl, test_dl), optim, criterion, target_metric="true_positive_rate", early_stopping=early_stopping)
         
         best = trainer.iterate(num_epochs, with_save=save_path, print_log=console)
@@ -113,6 +124,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--save_path', help='where to save best model', type=str, default=None)
     parser.add_argument('-l', '--load_path', help='where to load model from', type=str, default=None)
     parser.add_argument('-wd', '--wd', help='weight decay to use for regularization', type=float, default=0.)
+    parser.add_argument('-cfg', '--config_path', help='path to configuration file', type=str, default='./sim2realVL/configs/cmn.yaml')
     #parser.add_argument('-dr', '--dropout', help='model dropout to use in training', type=float, default=0.25)
     parser.add_argument('-early', '--early_stopping', help='early stop patience (default no early stopping)', type=int, default=None)
     parser.add_argument('-lr', '--lr', help='learning rate to use in optimizer', type=float, default=1e-03)

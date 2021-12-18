@@ -30,8 +30,7 @@ class MultiLabelVG(nn.Module):
         # if skipping visual encoder, run twostage forward method
         self.forward = self._forward_twostage if visual_embedder is None else self._forward_onestage
 
-    def _forward_onestage(self, inputs: Tuple[Tensor, ...]) -> Tensor:
-        visual, text, position = inputs
+    def _forward_onestage(self, visual: Tensor, queries: Tensor, position: Tensor) -> Tensor:
         # visual: B x N x 3 x H x W, position: B x N x Dp, text: B x T x Dt
         assert self.vis_emb is not None
         batch_size, num_objects, _, height, width = visual.shape
@@ -48,9 +47,8 @@ class MultiLabelVG(nn.Module):
         
         return self.classifier(fused).squeeze() # B x N x 1
 
-    def _forward_twostage(self, inputs: Tuple[Tensor, ...]):
-        vis_feats, text, position = inputs
-        # vis_feats: B x N x Dv, position: B x N x Dp, text: B x T x Dt
+    def _forward_twostage(self, visual: Tensor, queries: Tensor, position: Tensor) -> Tensor:
+        vis_feats = visual
         assert self.vis_emb is None
         batch_size, num_objects = vis_feats.shape[0:2]
         
@@ -64,14 +62,14 @@ class MultiLabelVG(nn.Module):
         return self.classifier(fused).squeeze() # B x N x 1      
 
 
-def collate(device: str, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], Tuple[Tensor, ...]]:
+def collate(device: str, without_position: bool = False, ignore_idx: int = -1) -> Map[List[Tuple[Tensor, ...]], Tuple[Tensor, ...]]:
     def _collate(batch: List[Tuple[Tensor, ...]]) -> Tuple[Tensor, ...]:
         visual, text, truths, position = zip(*batch)
         visual = pad_sequence(visual, batch_first=True, padding_value=ignore_idx).to(device)
         text = pad_sequence(text, batch_first=True).to(device)
         truths = pad_sequence(truths, batch_first=True, padding_value=ignore_idx).to(device)
         position = pad_sequence(position, batch_first=True, padding_value=ignore_idx).to(device) 
-        return visual, text, truths, position
+        return (visual, text, position, truths) if not without_position else (visual, text, truths)
     return _collate
 
 

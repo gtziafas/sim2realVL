@@ -2,7 +2,7 @@ from ..types import *
 from ..data.sim_dataset import *
 from ..models.position_embedder import make_position_embedder
 from ..models.word_embedder import make_word_embedder
-from ..models.cmn import WordTagger, SpatialRelations
+from ..models.cmn import WordTagger, PairwiseSpatialRelations
 from ..utils.loss import BCEWithLogitsIgnore
 from ..data.scene_parser import SceneParser 
 from ..utils.metrics import *
@@ -33,7 +33,7 @@ class SpatialModule(nn.Module):
                               cfg['word_vocab_size']
                               ).apply(self.init_weights)
 
-        self.spt_rel = SpatialRelations(cfg['position_embed_size'],
+        self.spt_rel = PairwiseSpatialRelations(cfg['position_embed_size'],
                               cfg['word_embed_size'],
                               cfg['jemb_size'],
                               cfg['jemb_dropout']

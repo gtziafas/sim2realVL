@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..models.position_embedder import make_position_embedder
+from ..models.word_embedder import make_word_embedder
+from ..models.visual_embedder import make_visual_embedder
 from ..utils.loss import BCEWithLogitsIgnore
 
 
@@ -21,46 +23,37 @@ class NormalizeScale(nn.Module):
       return bottom_normalized_scaled
 
 
-class MatchingLess(nn.Module):
+class Matching(nn.Module):
     def __init__(self, 
                  object_dim: int, 
                  text_dim: int, 
                  jemb_dim: int, 
-                 jemb_dropout: float=0.,
-                 with_bn: bool = False
+                 jemb_dropout: float=0.
                 ):
         super().__init__()
-        self.bn = nn.Identity() if not with_bn else nn.BatchNorm1d(jemb_dim)
-        self.object_fc = nn.Linear(object_dim, text_dim)
-        self.jemb_fc = nn.Linear(text_dim, 1)
+        self.object_fc = nn.Linear(object_dim, jemb_dim)
+        self.text_fc = nn.Linear(text_dim, jemb_dim)
+        self.match = nn.Linear(text_dim, 1)
         self.dropout = nn.Dropout(jemb_dropout)
 
     def forward(self, object_input: Tensor, text_input: Tensor) -> Tensor:
         # objects: B x N x Do, text: B x Dt
         B, N = object_input.shape[0:2]
 
-        object_feat = object_input.view(B * N, -1)
+        object_input = object_input.view(B * N, -1)
+        object_emb = self.object_fc(object_input)
+        
+        text_emb = self.text_fc(text_input)
+        text_tile = text_emb.unsqueeze(1).repeat(1, num_objects, 1).view(-1, self.jemb_dim)
+        
+        jembs = F.normalize(object_emb * text_tile, p=2, dim=1)
+        jembs = self.dropout(jembs)
 
-        object_emb = self.object_fc(object_feat)
-        #text_emb = self.text_fc(text_input)
-
-        # l2-normalize
-        # object_emb_norm = F.normalize(object_emb, p=2, dim=1)
-        # text_emb_norm = F.normalize(text_emb, p=2, dim=1)
-
-        # repeat text to match object emb tile
-        object_emb_tile = object_emb.view(B, N, -1)
-        text_emb_tile = text_input.unsqueeze(1).repeat(1, N, 1)
-        jemb = F.normalize(object_emb_tile * text_emb_tile, p=2, dim=-1)
-        jemb = self.dropout(jemb)
-
-        scores = self.jemb_fc(jemb)
-
-        return scores.squeeze()
+        return self.match(jembs).squeeze().view(B, N) #  B x N
         
 
 
-class Matching(nn.Module):
+class Matching2(nn.Module):
     def __init__(self, 
                  object_dim: int, 
                  text_dim: int, 
@@ -114,31 +107,7 @@ class Matching(nn.Module):
         return scores
 
 
-class RelationModule(nn.Module):
-    def __init(self, 
-               pos_dim: int, 
-               text_dim: int,
-               jemb_dim: int,
-               jemb_dropout: float = 0.,
-               with_bn: bool = False
-              ):
-        super().__init__()
-        self.match = Matching(2*pos_dim, text_dim, jemb_dim, jemb_dropout, with_bn)
-
-    def forward(self, pos_embs: Tensor, q_spt: Tensor) -> Tensor:
-        # pos_embs: B x N x Dp, q_spt: B x Dt
-        batch_size, num_objects = pos_embs.shape[0:2]
-        
-        # N x N pair-wise embeddings, flattened
-        p_tile = pos_embs.unsqueeze(2).repeat(1, 1, num_objects, 1)
-        pos_embs = torch.cat([p_tile, p_tile.transpose(1,2)], dim=-1)  
-        pos_embs = pos_embs.view(batch_size, num_objects**2, -1) # B x N^2 x 2*Dp
-
-        scores = self.match(pos_embs, q_spt)
-        return scores.view(batch_size, num_objects, num_objects)
-
-
-class SpatialRelations(nn.Module):
+class PairwiseSpatialRelations(nn.Module):
   def __init__(self, 
                pos_dim: int,
                text_dim: int, 
@@ -153,20 +122,26 @@ class SpatialRelations(nn.Module):
         self.match = nn.Linear(jemb_dim, 1)
 
   def forward(self, pos_embs: Tensor, q_spt: Tensor) -> Tensor:
-    # pos_embs: B x N x 2*Dp, q_st: B x Dt
+    # pos_embs: B x N x Dp, q_st: B x Dt
     batch_size, num_objects = pos_embs.shape[0:2]
+    
+    # N x N pair-wise position embeddings, flattened
+    p_tile = pos_embs.unsqueeze(2).repeat(1, 1, num_objects, 1)
+    p_pair = torch.cat([p_tile, p_tile.transpose(1,2)], dim=-1)  
+    p_pair = p_pair.view(batch_size, num_objects**2, -1) # B x N^2 x 2*Dp
+
     pos_embs = self.pos_fc(pos_embs)
-    pos_embs = F.leaky_relu(pos_embs).view(-1, self.jemb_dim) # B*N x Dj
+    pos_embs = F.leaky_relu(pos_embs).view(-1, self.jemb_dim) # B*N^2 x Dj
 
     q_spt = self.text_fc(q_spt)
     q_spt = F.leaky_relu(q_spt)
-    # B*N x Dj
-    q_spt_tile = q_spt.unsqueeze(1).repeat(1, num_objects, 1).view(-1, self.jemb_dim)
+    # B*N^2 x Dj
+    q_spt_tile = q_spt.unsqueeze(1).repeat(1, num_objects**2, 1).view(-1, self.jemb_dim)
 
     jembs = F.normalize(pos_embs * q_spt_tile, p=2, dim=1)
     jembs = self.dropout(jembs)
 
-    return self.match(jembs).squeeze() #  (B*N,)
+    return self.match(jembs).view(batch_size, num_objects, num_objects) #  (B x N x N)
 
 
         
@@ -248,10 +223,10 @@ class WordTagger(nn.Module):
         is_tag = torch.logical_and(tags.argmax(-1) == tag_id, ~pad_mask)
         tag_mask = torch.where(is_tag.unsqueeze(2), queries, torch.zeros_like(queries))
         embs.append(tag_mask.mean(1))
-      return embs, q_context
+      return embs, tags, q_context
 
 
-class CMN(nn.Module):
+class CMNEndToEnd(nn.Module):
   def __init__(self, cfg: Dict[str, Any]):
     super().__init__()
     self.padding_value = cfg['padding_value']
@@ -282,14 +257,14 @@ class CMN(nn.Module):
     num_rnn_dirs = 1 if not cfg['word_rnn_bidirectional'] else 2 
     self.weight_fc = nn.Linear(num_rnn_dirs * cfg['word_hidden_size'], 3)
 
-    self.ground_mod = Matching(cfg['visual_embed_size'] +  cfg['position_embed_size'],
+    self.ground_mod = Matching2(cfg['visual_embed_size'] +  cfg['position_embed_size'],
                                cfg['word_embed_size'],
                                cfg['jemb_size'],
                                cfg['jemb_dropout'],
                                cfg['with_batch_norm']
                               )
 
-    self.spatial_mod = Matching(2 * cfg['position_embed_size'],
+    self.spatial_mod = Matching2(2 * cfg['position_embed_size'],
                                 cfg['word_embed_size'],
                                 cfg['jemb_size'],
                                 cfg['jemb_dropout'],
@@ -303,9 +278,8 @@ class CMN(nn.Module):
 
     self.strong = cfg['strong_supervision']
 
-  def forward(self, inputs: Tuple[Tensor, ...]) -> Tensor:
+  def forward(self, visual: Tensor, queries: Tensor, position: Tensor) -> Tensor:
     # visual: B x N x Dv, position: B x N x Dp, query: B x T x Dt
-    visual, queries, position = inputs
     position = self.position_embedder(position)
     batch_size, num_objects = visual.shape[0:2]
 
@@ -314,7 +288,7 @@ class CMN(nn.Module):
 
     # average word embeddigns according to predicted tag
     pad_mask = (queries == self.padding_value).sum(-1) == queries.shape[-1]
-    qs, q_context = self.word_tagger.encode_per_tag(queries, pad_mask) # (4x) B x Dt
+    qs, tags, q_context = self.word_tagger.encode_per_tag(queries, pad_mask) # (4x) B x Dt
     # q_loc, q_obj, q_rel, q_subj = self.word_fc(self.word_norm(torch.stack(qs, dim=0)))
     q_loc, q_obj, q_rel, q_subj = qs 
 
@@ -329,8 +303,7 @@ class CMN(nn.Module):
     S_subj = subj_scores.unsqueeze(2).repeat(1, 1, num_objects)
 
     #return subj_scores    
-    
-
+  
     # N x N pair-wise position embeddings, flattened
     # position = self.position_fc(self.position_norm(position))
     p_tile = position.unsqueeze(2).repeat(1, 1, num_objects, 1)
@@ -369,3 +342,113 @@ class CMN(nn.Module):
 
   def triplet_loss(self, S_unit: Tensor, gt_subj: Tensor) -> Tensor:
     raise NotImplementedError
+
+
+
+class CMNInference(ABC):
+  def __init__(self,
+               device: str,
+               word_tagger_chp: "",
+               spt_rel_chp: "",
+               ground_chp: "",
+               config_path: str = './sim2realVL/configs/cmn.yaml'):
+    self.WE = make_word_embedder()
+    self.PE = make_position_embedder()
+    self.VE = make_visual_embedder()
+    self.device = device 
+    self.tag_vocab = {k: v for k, v in enumerate(cfg['tagset'])}
+
+    with open(config_path, 'r') as stream:
+      cfg = yaml.safe_load(stream)
+    
+    self.padding_value = cfg['padding_value']
+    self.word_tagger = WordTagger(len(cfg['tagset']),
+                                  cfg['word_embed_size'],
+                                  cfg['word_hidden_size'],
+                                  cfg['word_num_rnn_layers'],
+                                  cfg['word_rnn_bidirectional'],
+                                  cfg['word_input_dropout'],
+                                  cfg['word_rnn_dropout'],
+                                  cfg['word_fc_dropout'],
+                                  cfg['word_rnn_type'],
+                                  cfg['word_embed_pretrain'],
+                                  cfg['word_vocab_size']
+                                  )
+    self.word_tagger.load_state_dict(torch.load(word_tagger_chp)).eval()
+
+    self.spt_rel = PairwiseSpatialRelations(cfg['position_embed_size'],
+                          cfg['word_embed_size'],
+                          cfg['jemb_size'],
+                          cfg['jemb_dropout']
+                          )
+    self.spt_rel.load_state_dict(torch.load(spt_rel_chp)).eval()
+
+    self.ground = Matching(cfg['visual_embed_size'],
+                          cfg['word_embed_size'],
+                          cfg['jemb_size'],
+                          cfg['jemb_dropout']
+                          )
+
+    self.ground.load_state_dict(torch.load(ground_chp)).eval()
+
+  @torch.no_grad()
+  def predict(self, crops: List[array], boxes: List[array], query: str) -> Tuple[List[int], array, List[str]]:
+    num_objects = len(crops)  # N
+
+    # pre-trained visual feature extractor
+    vis_embs = self.VE.features(crops).unsqueeze(0) # 1 x N x Dv
+
+    # position embedding
+    boxes_t = torch.stack([torch.tensor([x, y, w, h], dtype=torch.long, device=self.device) 
+                for x, y, w, h in boxes])
+    pos_embs = self.PE(boxes_t).unsqueeze(0)  # 1 x N x Dp
+
+    # glove embeddings
+    word_embs = self.WE([query])[0].unsqueeze(0) # 1 x T x Dt
+
+    # word tagging
+    pad_mask = (word_embs == self.padding_value).sum(-1) == word_embs.shape[-1]  # 1 x N x N 
+    (q_loc, q_obj, q_rel, q_subj), tag_scores, _ = self.word_tagger.encode_per_tag(word_embs).squeeze() # N x 4
+    tags = [self.tag_vocab[t] for t in tag_scores.argmax(-1).tolist()] 
+
+    if '<subj>' not in tags:
+      print('Not happening...')
+
+    elif '<loc>' not in tags and '<rel>' not in tags:
+      # just subject scores
+      S_subj = self.ground(vis_embs, q_subj).squeeze() # 1 x N 
+      S_subj = S_subj.sigmoid().ge(0.5).long().tolist() # one-hot
+      return S_subj, None, tags 
+
+    elif '<loc>' in tags:
+      # absolute spatial - score <subj> <loc> <subj>
+      S_subj = self.ground(vis_embs, q_subj).squeeze() # (N,)
+      S_loc = self.spt_rel(pos_embs, q_loc).squeeze()  # N x N 
+
+      subj_gate = S_subj.sigmoid().ge(0.5).unsqueeze(1).repeat(1, num_objects)
+      obj_gate = S_subj.sigmoid().ge(0.5).unsqueeze(0).repeat(num_objects, 1)
+      spt_gate = S_loc.sigmoid().ge(0.5)
+
+      # only one correct
+      out = (subj_gate * spt_gate * obj_gate).sum(1).argmax()
+      out = out[num_objects][out] # one-hot
+
+      return out.tolist(), spt_gate.cpu().numpy(), tags
+
+    elif '<rel>' in tags:
+      # relative spatial - score <subj> <rel> <obj>
+      S_subj = self.ground(vis_embs, q_subj).squeeze() # (N,)
+      S_obj = self.ground(vis_embs, q_obj).squeeze() # (N,)
+      S_rel = self.spt_rel(pos_embs, q_rel).squeeze()  # N x N 
+
+      subj_gate = S_subj.sigmoid().ge(0.5).unsqueeze(1).repeat(1, num_objects)
+      obj_gate = S_obj.sigmoid().ge(0.5).unsqueeze(0).repeat(num_objects, 1)
+      spt_gate = S_rel.sigmoid().ge(0.5)
+
+      # possibly multiple correct
+      out = (subj_gate * spt_gate * obj_gate).sum(1).bool().long()
+      
+      return out.tolist(), spt_gate.cpu().numpy(), tags 
+
+    else:
+      print('Also not happening...')
