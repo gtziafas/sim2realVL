@@ -41,8 +41,8 @@ def main(num_epochs: int,
          ):
 
     def train(train_ds: List[AnnotatedScene], dev_ds: List[AnnotatedScene], test_ds: Maybe[List[AnnotatedScene]] = None):
-        train_dl = DataLoader(train_ds, shuffle=True, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
-        dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device))
+        train_dl = DataLoader(train_ds, shuffle=True, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device, without_position=True))
+        dev_dl = DataLoader(dev_ds, shuffle=False, batch_size=batch_size, worker_init_fn=SEED, collate_fn=collate(device, without_position=True))
 
         # optionally test in separate split, given from a path directory as argument
         test_dl = DataLoader(test_ds, shuffle=False, batch_size=batch_size, collate_fn=collate(device)) if test_ds is not None else None
@@ -55,7 +55,8 @@ def main(num_epochs: int,
             model =  Matching(cfg['visual_embed_size'],
                               cfg['word_embed_size'],
                               cfg['jemb_size'],
-                              cfg['jemb_dropout']
+                              cfg['jemb_dropout'],
+                              from_phrase=True
                             ).to(device)
         
         elif model_id != "CMN":

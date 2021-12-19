@@ -56,19 +56,14 @@ class SpatialModule(nn.Module):
         position = self.position_embedder(position)
         batch_size, num_objects = position.shape[0:2]
 
-        # N x N pair-wise position embeddings, flattened
-        p_tile = position.unsqueeze(2).repeat(1, 1, num_objects, 1)
-        p_pair = torch.cat([p_tile, p_tile.transpose(1,2)], dim=-1)  
-        p_pair = p_pair.view(batch_size, num_objects**2, -1) # B x N^2 x 2*Dp
-
         # average word embeddigns according to predicted tag
         pad_mask = (queries == self.padding_value).sum(-1) == queries.shape[-1]
-        (q_loc, _, q_rel, _), q_context = self.word_tagger.encode_per_tag(queries, pad_mask) # (4x) B x Dt
+        (q_loc, _, q_rel, _), _, _ = self.word_tagger.encode_per_tag(queries, pad_mask) # (4x) B x Dt
         
         # merge loc + rel 
         assert (q_loc.sum(1) * q_rel.sum(1)).sum() == 0 
         q_spt = q_loc + q_rel 
-        scores = self.spt_rel(p_pair, q_spt).view(batch_size, num_objects, num_objects) # B x N x N 
+        scores = self.spt_rel(position, q_spt) # B x N x N 
         
         return scores
 
@@ -91,11 +86,9 @@ class SpatialModuleTest(object):
         q_spt = torch.tensor(self.WE([query])[0]).mean(0, keepdim=True)
 
         pos_embs = self.PE(torch.stack([torch.tensor(p) for p in positions]).unsqueeze(0)) # 1 x N x 8
-        p_tile = pos_embs.unsqueeze(2).repeat(1, 1, N, 1)
-        p_pair = torch.cat([p_tile, p_tile.transpose(1,2)], dim=-1)  
-        p_pair = p_pair.view(1, N**2, -1) # 1 x N^2 x 8
+
+        matrix = self.net(pos_embs, q_spt).squeeze().sigmoid().ge(0.5).cpu().numpy()
         
-        matrix = self.net(p_pair, q_spt).squeeze().view(N, N).sigmoid().ge(0.5).cpu().numpy()
         return matrix
 
 
@@ -128,7 +121,7 @@ def make_spatial_dataset(load_chp: str, save_chp: str):
 
     assert len(masks) == len(Qs) == len(Ps)
     assert len(set([p.shape[0] for p in Ps]).difference(set([m.shape[0] for m in masks]))) == 0 
-    
+
     torch.save(list(zip(Qs, Ps, masks)), save_chp)
 
 
@@ -137,7 +130,7 @@ def collate(device: str, padding_value: int = - 1) -> Map[List[Tuple[Tensor,...]
         qs, ps, masks = zip(*batch)
         qs = pad_sequence(qs, batch_first=True, padding_value=padding_value)
         ps = pad_sequence(ps, batch_first=True, padding_value=padding_value)
-        # manual padding 
+        # manual padding (ouch!
         maxlen = ps.shape[1]
         masks_padded = padding_value * torch.ones((len(batch), maxlen, maxlen), dtype=floatt)
         for i, m in enumerate(masks):
